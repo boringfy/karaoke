@@ -1,0 +1,20 @@
+appId: com.boringfy.karaoke-player
+productName: Karaoke Player
+directories:
+  buildResources: build
+  output: release
+files:
+  - dist/**
+  - dist-electron/**
+asar: true
+# electron-builder auto-derives .icns/.ico from build/icon.png;
+# replace it with real artwork (and per-OS icons) when available.
+mac:
+  target: dmg
+  category: public.app-category.music
+  identity: null
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

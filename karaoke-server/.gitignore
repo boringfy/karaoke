@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Local data & models
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+
+# Scratch
+scratch_*.py

@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+release/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Logs & OS cruft
+*.log
+.DS_Store

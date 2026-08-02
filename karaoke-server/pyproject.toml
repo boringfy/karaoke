@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "karaoke-server"
+version = "0.1.0"
+description = "Local-first karaoke server: fetches lyrics, separates vocals, and force-aligns word-level karaoke subtitles for songs you own."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "karaoke-server contributors" }]
+keywords = ["karaoke", "lyrics", "forced-alignment", "furigana", "demucs", "whisper"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.20",
+    "pydantic-settings>=2.2",
+    "mutagen>=1.47",
+    "httpx>=0.27",
+    "rapidfuzz>=3.6",
+    "fugashi[unidic-lite]>=1.3",
+    "jaconv>=0.3.4",
+    "syncedlyrics>=1.0",
+    "opencc-python-reimplemented>=0.1.7",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# Heavy ML dependencies for the audio pipeline (separation + alignment).
+# The server runs without them; SEPARATE/ALIGN stages will fail with a clear
+# message until they are installed.
+ml = [
+    "audio-separator>=0.30",
+    "stable-ts>=2.17",
+    "faster-whisper>=1.1",
+    "silero-vad>=5.1",
+]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+karaoke-server = "karaoke_server.main:cli"
+
+[project.urls]
+Homepage = "https://github.com/boringfy/karaoke"
+
+[tool.hatch.build.targets.wheel]
+packages = ["karaoke_server"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# B008: Depends()/File() in defaults is the canonical FastAPI pattern.
+"karaoke_server/api/*" = ["B008"]
+# E501: the ASS style header is a fixed-format line that cannot wrap.
+"karaoke_server/subtitles/exporters.py" = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
