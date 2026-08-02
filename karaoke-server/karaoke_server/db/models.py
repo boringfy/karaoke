@@ -38,20 +38,27 @@ class Stage(enum.StrEnum):
 
 
 # Stage dependency graph: a stage may run once all its dependencies are done.
-# SEPARATE is NOT part of the automatic chain — the user triggers it manually
-# via POST /songs/{id}/separate; when it finishes, the align chain re-runs
-# against the cleaner vocal stem.
+# SEPARATE runs automatically as part of the import chain (before ALIGN, so
+# alignment uses the cleaner vocal stem). It skips itself when the user has
+# supplied their own instrumental, so no vocals are removed unnecessarily.
 STAGE_DEPS: dict[Stage, list[Stage]] = {
     Stage.ingest: [],
     Stage.lyrics: [Stage.ingest],
     Stage.separate: [Stage.ingest],
-    Stage.align: [Stage.lyrics],
+    Stage.align: [Stage.lyrics, Stage.separate],
     Stage.annotate: [Stage.align],
     Stage.render: [Stage.annotate],
 }
 
 # Stages enqueued automatically when an original audio file is uploaded.
-AUTO_STAGES: list[Stage] = [Stage.ingest, Stage.lyrics, Stage.align, Stage.annotate, Stage.render]
+# SEPARATE generates the instrumental up front (unless one was uploaded). It
+# runs right after INGEST — before LYRICS — so the instrumental is produced even
+# if lyrics can't be found, and so ALIGN can use the cleaner vocal stem. It is
+# best-effort: a separation failure degrades to "skipped" and never blocks the
+# subtitle pipeline.
+AUTO_STAGES: list[Stage] = [
+    Stage.ingest, Stage.separate, Stage.lyrics, Stage.align, Stage.annotate, Stage.render
+]
 
 # Stages re-run after lyrics change or separation completes.
 REALIGN_STAGES: list[Stage] = [Stage.align, Stage.annotate, Stage.render]

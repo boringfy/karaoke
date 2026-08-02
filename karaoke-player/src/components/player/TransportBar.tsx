@@ -1,10 +1,8 @@
-import { separate } from '../../api/songs'
 import { nudgeLyricOffset } from '../../player/lyricSync'
 import { engine } from '../../player/PlaybackEngine'
 import { playNextInQueue } from '../../player/usePlaybackEngine'
 import { usePlayerStore } from '../../stores/playerStore'
 import { useQueueStore } from '../../stores/queueStore'
-import { useUiStore } from '../../stores/uiStore'
 import { SeekBar } from './SeekBar'
 
 export function TransportBar() {
@@ -14,7 +12,6 @@ export function TransportBar() {
   const offsetMs = usePlayerStore((s) => s.subtitle?.offset_ms ?? null)
   const queueLen = useQueueStore((s) => s.queue.length)
   const queueIdx = useQueueStore((s) => s.currentIndex)
-  const toast = useUiStore((s) => s.toast)
 
   if (!song) return null
   const canToggle = song.has_original && song.has_instrumental
@@ -79,17 +76,9 @@ export function TransportBar() {
               </button>
             </div>
           ) : song.has_original && !song.has_instrumental ? (
-            <button
-              className="link-btn"
-              title="Remove vocals on the server to enable karaoke mode"
-              onClick={() => {
-                void separate(song.id)
-                  .then(() => toast('Generating instrumental — check the library for progress'))
-                  .catch((err) => toast(String(err.message ?? err), 'error'))
-              }}
-            >
-              Generate instrumental
-            </button>
+            <span className="track-toggle-hint" title="The instrumental is generated automatically">
+              Preparing karaoke…
+            </span>
           ) : null}
           <button
             title="Fullscreen (f)"

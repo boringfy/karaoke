@@ -168,19 +168,31 @@ def _write_selected_lyrics(song: Song, cand: LyricsCandidate) -> None:
 
 
 def load_lyrics(song: Song) -> tuple[list[str], list[float | None]]:
-    """Return (lines, per-line LRC anchor times or None)."""
+    """Return (lines, per-line LRC anchor times or None).
+
+    Japanese lyrics are normalized to shinjitai glyphs here: Chinese lyric
+    sites deliver Japanese text with Simplified codepoints (热 for 熱), which
+    break furigana and weaken alignment."""
     if not song.lyrics_path or not Path(song.lyrics_path).exists():
         raise StageError("no lyrics selected; fetch or upload lyrics first")
     payload = json.loads(Path(song.lyrics_path).read_text(encoding="utf-8"))
+
+    def _norm(text: str) -> str:
+        if song.language == "ja":
+            from ..lyrics.script import to_japanese_kanji
+
+            return to_japanese_kanji(text)
+        return text
+
     lrc_raw = payload.get("lrc")
     if lrc_raw:
         parsed = parse_lrc(lrc_raw)
         if parsed:
-            return [line.text for line in parsed], [line.time for line in parsed]
+            return [_norm(line.text) for line in parsed], [line.time for line in parsed]
     lines = plain_lines(payload.get("text") or "")
     if not lines:
         raise StageError("selected lyrics are empty")
-    return lines, [None] * len(lines)
+    return [_norm(ln) for ln in lines], [None] * len(lines)
 
 
 # --------------------------------------------------------------------------- separate
@@ -192,21 +204,32 @@ async def stage_separate(ctx: StageContext) -> str | None:
         song = await ctx.get_song(session)
         if not song.original_path:
             raise StageError("no original audio uploaded")
+        # The user supplied their own instrumental — don't generate one over it.
+        if song.instrumental_source == "uploaded" and (
+            song.instrumental_path and Path(song.instrumental_path).exists()
+        ):
+            return "skipped"
         src = Path(song.original_path)
     out_dir = storage.song_dir(ctx.song_id)
 
-    vocals_wav, instrumental_wav = await asyncio.to_thread(separate_track, src, out_dir)
-
-    settings = ctx.settings
-    if settings.instrumental_bitrate:
-        opus = out_dir / "instrumental.opus"
-        await asyncio.to_thread(
-            ffmpeg.encode_opus, instrumental_wav, opus, settings.instrumental_bitrate
-        )
-        instrumental_final = opus
-        instrumental_wav.unlink(missing_ok=True)
-    else:
-        instrumental_final = instrumental_wav
+    try:
+        vocals_wav, instrumental_wav = await asyncio.to_thread(separate_track, src, out_dir)
+        settings = ctx.settings
+        if settings.instrumental_bitrate:
+            opus = out_dir / "instrumental.opus"
+            await asyncio.to_thread(
+                ffmpeg.encode_opus, instrumental_wav, opus, settings.instrumental_bitrate
+            )
+            instrumental_final = opus
+            instrumental_wav.unlink(missing_ok=True)
+        else:
+            instrumental_final = instrumental_wav
+    except Exception:  # noqa: BLE001
+        # Best-effort: since SEPARATE runs before LYRICS/ALIGN, a failure here
+        # must not block the subtitle pipeline. Degrade to "skipped"; the user
+        # can retry via POST /separate or upload their own instrumental.
+        log.exception("separation failed for %s; continuing without an instrumental", ctx.song_id)
+        return "skipped"
 
     async with ctx.sessions() as session:
         song = await ctx.get_song(session)

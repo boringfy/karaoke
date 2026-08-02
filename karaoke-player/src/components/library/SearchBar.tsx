@@ -6,7 +6,9 @@ export function SearchBar() {
   const setQuery = useLibraryStore((s) => s.setQuery)
   const statusFilter = useLibraryStore((s) => s.statusFilter)
   const setStatusFilter = useLibraryStore((s) => s.setStatusFilter)
-  const [value, setValue] = useState('')
+  // Seed from the persisted query so the text survives leaving/returning to the
+  // library (the view unmounts while a song plays).
+  const [value, setValue] = useState(() => useLibraryStore.getState().q)
   const debouncedSearch = useDebouncedCallback((q: string) => setQuery(q), 300)
 
   return (

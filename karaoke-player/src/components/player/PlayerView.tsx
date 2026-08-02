@@ -18,10 +18,19 @@ export function PlayerView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (useUiStore.getState().view !== 'player') return
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      // Only defer to real text entry. Range sliders (seek bar) and buttons
+      // keep focus after a click; shortcuts must still work then.
+      const t = e.target
+      const isTextEntry =
+        t instanceof HTMLTextAreaElement ||
+        (t instanceof HTMLInputElement && !['range', 'checkbox', 'radio', 'button'].includes(t.type))
+      if (isTextEntry) return
       switch (e.key) {
         case ' ':
           e.preventDefault()
+          // Drop focus from whatever control was last clicked (button/slider),
+          // so Space can't also activate it and immediately undo the toggle.
+          if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
           void engine.togglePlay()
           break
         case 'ArrowLeft':
@@ -49,6 +58,8 @@ export function PlayerView() {
           nudgeLyricOffset(100)
           break
         case 'Escape':
+          e.preventDefault()
+          if (document.fullscreenElement) void document.exitFullscreen()
           setView('library')
           break
       }

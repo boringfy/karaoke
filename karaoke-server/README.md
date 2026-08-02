@@ -14,13 +14,16 @@ for the core path. Intended for songs you have purchased and are licensed to use
 
 - **Auto lyrics** by title (+ optional artist) from LRCLIB, with fallbacks and
   manual override. English, Chinese, and Japanese.
-- **Forced alignment** (stable-ts over faster-whisper) giving per-word/per-character
-  timestamps for progressive karaoke highlighting, with confidence scoring and
-  graceful fallback for lines it can't align.
+- **Word/character timing** — the downloaded lyrics are the ground truth for the
+  *text*; a Whisper transcription supplies only the *timing*, sequence-aligned
+  onto the real words (English) or characters (Chinese/Japanese). Instrumental
+  gaps stay empty (no crawling highlight), and lyric lines a short clip/MV never
+  reaches are trimmed automatically. Confidence-scored, with a stable-ts forced
+  alignment fallback.
 - **Furigana**: every kanji annotated with its hiragana reading (fugashi + UniDic),
   okurigana correctly excluded from the ruby span.
-- **Vocal removal** (audio-separator / UVR models) to generate an instrumental —
-  a manual, on-demand step.
+- **Vocal removal** (audio-separator / UVR models) generates an instrumental
+  automatically at import (unless you upload your own); regenerate on demand.
 - **Canonical subtitle JSON** for the UI, plus exports to enhanced LRC, LRC, SRT,
   and ASS (with `\k` karaoke sweeps and a furigana layer).
 - **Resumable pipeline** backed by SQLite; survives restarts, no external broker.
@@ -65,8 +68,8 @@ curl -X POST localhost:8787/api/v1/songs/$ID/audio -F kind=original -F file=@son
 # 3. watch progress
 curl -N localhost:8787/api/v1/songs/$ID/events
 
-# 4. (optional) generate an instrumental by removing vocals
-curl -X POST localhost:8787/api/v1/songs/$ID/separate
+# 4. (optional) regenerate the instrumental — it is generated automatically at import
+curl -X POST localhost:8787/api/v1/songs/$ID/separate?force=true
 
 # 5. fetch the karaoke subtitle for your UI
 curl localhost:8787/api/v1/songs/$ID/subtitle?format=json
@@ -77,13 +80,13 @@ Full endpoint reference: **[docs/API.md](docs/API.md)**.
 ## How it works
 
 ```
-upload original ─► INGEST ─► LYRICS ─► ALIGN ─► ANNOTATE(ja) ─► RENDER ─► ready
-                   (tags,    (fetch    (vocal   (furigana)      (json +
-                    probe)    lyrics)   timing)                  lrc/ass/srt)
+upload original ─► INGEST ─► SEPARATE ─► LYRICS ─► ALIGN ─► ANNOTATE(ja) ─► RENDER ─► ready
+                   (tags,    (vocals +   (fetch    (vocal   (furigana)      (json +
+                    probe)    instrum.)   lyrics)   timing)                  lrc/ass/srt)
 
-POST /separate ─► SEPARATE ─► (re)ALIGN ─► ANNOTATE ─► RENDER
-                  (vocals +    against the cleaner vocal stem
-                   instrumental)
+SEPARATE runs automatically and is best-effort: it is skipped when you upload
+your own instrumental, and a failure never blocks lyrics/subtitles. Regenerate
+later with POST /separate (add ?force=true to replace an uploaded instrumental).
 ```
 
 The canonical output is `subtitle.json`; LRC/ASS/SRT are rendered from it on

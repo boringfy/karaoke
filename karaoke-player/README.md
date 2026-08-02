@@ -5,19 +5,30 @@ Desktop karaoke player (Electron + React + TypeScript) for the local
 
 ## Features
 
-- Song library with fuzzy search by song or singer name, status filters, edit/delete
-- Full player: MV video, play/pause, seek ±10s/±30s, restart, skip to next
-- **Seamless original ⇄ instrumental toggle** — both tracks play in parallel and
-  swap with a 60 ms gain crossfade at the exact same timestamp
-- Karaoke subtitles with per-word progressive highlight (from the server's
-  token-timed subtitle JSON), furigana ruby, and translations
-- Client-side play queue with auto-advance, persisted across restarts
-- Cover art: shown in the library and as the playback background for songs
-  without an MV (uploaded, or auto-extracted from audio tags by the server)
-- Lyric sync adjustment (±0.1 s steps) persisted to the server per song
-- Upload wizard: create song → upload original/instrumental audio, MV, cover,
-  and optional `.lrc`/`.txt` lyrics → generate instrumental (vocal removal) →
-  live processing progress over SSE → play when ready
+- **Song library** — fuzzy search by song or singer, status filters, and an
+  edit dialog to rename/re-tag, **replace the audio** (re-runs processing),
+  **replace or regenerate the instrumental**, or delete a song and its files.
+- **Full player** — MV video, play/pause, seek ±10 s/±30 s, restart, skip to next.
+- **Seamless original ⇄ instrumental (karaoke) toggle** — both tracks play in
+  parallel and swap with a 60 ms gain crossfade at the exact same timestamp.
+  The instrumental is generated automatically at import, so karaoke mode is
+  ready without any manual step.
+- **Karaoke subtitles** — progressive highlight from the server's token-timed
+  JSON: per **word** (English) / per **character** (Chinese, Japanese), with
+  hiragana **furigana** ruby and optional translations. Text is **sized to the
+  window** (grows in fullscreen) with a dark halo so it stays legible over any
+  background, and only the current line is shown for a clean look.
+- **Mini-player** — leave the player (Esc) and a compact bar stays over the
+  library showing the **live lyrics** with controls: play/pause, **stop**,
+  expand back to full screen.
+- **Play queue** — client-side, auto-advance, persisted across restarts.
+- **Cover art** — shown in the library and as the playback background for songs
+  without an MV (uploaded, or auto-extracted from the audio tags by the server).
+- **Lyric sync** — nudge subtitles ±0.1 s, persisted to the server per song.
+- **Upload wizard** — create a song → drop original audio (and optionally your
+  own instrumental, an MV, cover art, or `.lrc`/`.txt` lyrics) → the server
+  fetches lyrics, removes vocals for an instrumental, and aligns word/character
+  timing, streaming **live progress over SSE** → play when ready.
 
 ## Prerequisites
 
@@ -59,7 +70,10 @@ page origin stays within the backend's CORS allowlist.
 | o | Toggle original / instrumental |
 | [ / ] | Lyrics earlier / later (0.1 s) |
 | f | Fullscreen |
-| Esc | Back to library |
+| Esc | Back to library (playback keeps going in the mini-player) |
+
+Pressing **Esc** returns to the library without stopping the song — the
+mini-player keeps the lyrics scrolling and offers a **stop** button.
 
 ## Architecture notes
 
@@ -71,5 +85,7 @@ page origin stays within the backend's CORS allowlist.
 - `src/subtitles/` — one `requestAnimationFrame` loop reads the engine clock;
   per-token fill is written as a CSS variable (`clip-path` on a fill layer), so
   React only re-renders on line changes.
+- `src/components/player/MiniPlayer.tsx` — reuses the same token renderer to
+  keep live lyrics + transport visible over the library while a song plays.
 - `electron/static-server.ts` — production-only static file server keeping the
   renderer on an allowed CORS origin.

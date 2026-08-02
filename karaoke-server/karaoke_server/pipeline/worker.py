@@ -30,7 +30,17 @@ async def enqueue_stages(
     session: AsyncSession, song_id: str, stages: list[Stage]
 ) -> list[Job]:
     """Append jobs for `stages` to the song's chain, skipping stages that are
-    already queued or running."""
+    already queued or running.
+
+    Enqueueing is a retry: earlier FAILED jobs are superseded (marked skipped)
+    so the claim loop's "a failed earlier stage fails the rest of the chain"
+    rule can't instantly kill the fresh jobs. Without this, one failure made a
+    song permanently unretryable."""
+    await session.execute(
+        update(Job)
+        .where(Job.song_id == song_id, Job.state == JobState.failed.value)
+        .values(state=JobState.skipped.value)
+    )
     active = set(
         (
             await session.execute(
@@ -144,6 +154,10 @@ class PipelineWorker:
                         job.state = JobState.failed.value
                         job.error = "upstream stage failed"
                         job.finished_at = utcnow()
+                        # Reflect the dead chain in the song status now — else the
+                        # song is stuck showing "processing" forever (the UI polls
+                        # status and never sees it flip to failed).
+                        await self._update_song_status(session, job.song_id)
                         await session.commit()
                         continue
                     job.state = JobState.running.value

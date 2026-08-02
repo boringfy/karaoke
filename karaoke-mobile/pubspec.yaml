@@ -1,0 +1,23 @@
+name: karaoke_mobile
+description: LAN karaoke client for karaoke-server (Android tablet).
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  just_audio: ^0.9.42 # two players → seamless original/instrumental crossfade
+  video_player: ^2.9.2 # MV playback, audio muted (audio comes from just_audio)
+  shared_preferences: ^2.3.2 # persist server URL
+  path_provider: ^2.1.4 # media cache directory
+  provider: ^6.1.2
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

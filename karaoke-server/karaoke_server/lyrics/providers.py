@@ -22,8 +22,13 @@ log = logging.getLogger(__name__)
 LRCLIB_BASE = "https://lrclib.net/api"
 USER_AGENT = "karaoke-server/0.1 (https://github.com/boringfy/karaoke)"
 
-# Reject candidates whose duration differs from the song by more than this.
-MAX_DURATION_DELTA = 4.0
+# Duration mismatch stops contributing to the score beyond this delta. It is
+# deliberately NOT a hard reject: live recordings, TV-size edits, and extended
+# versions legitimately differ from the studio track by tens of seconds, and
+# the transcription-based aligner reconciles the lyrics to what is actually
+# sung (trimming, reordering, repeats). A perfect title/artist match must
+# still win even when the length is way off.
+DURATION_FALLOFF_S = 60.0
 
 
 @dataclass
@@ -63,10 +68,9 @@ def score_candidate(
     dur_score = 0.5
     if duration_sec and cand.duration_sec:
         delta = abs(duration_sec - cand.duration_sec)
-        if delta > MAX_DURATION_DELTA:
+        dur_score = max(0.0, 1.0 - delta / DURATION_FALLOFF_S)
+        if delta > 10.0:
             cand.notes.append(f"duration off by {delta:.1f}s")
-            return 0.0
-        dur_score = 1.0 - delta / MAX_DURATION_DELTA
 
     score = 0.35 * title_score + 0.2 * artist_score + 0.3 * dur_score
     if cand.is_synced:

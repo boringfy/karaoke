@@ -3,7 +3,6 @@ import {
   createSong,
   getSong,
   reprocess,
-  separate,
   uploadAudio,
   uploadCover,
   uploadVideo,
@@ -23,8 +22,8 @@ const VIDEO_ACCEPT = '.mp4,.mkv,.webm,.mov,.avi,.ts'
 const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp,.gif'
 
 /**
- * Create song → upload audio (original / instrumental) → upload MV →
- * generate instrumental (optional) → watch processing → play.
+ * Create song → upload audio (original / optional instrumental) → upload MV →
+ * watch processing (instrumental is auto-generated when not provided) → play.
  * Opening it for an existing song resumes at the files step.
  */
 export function UploadWizard({ songId }: { songId: string | 'new' }) {
@@ -35,7 +34,6 @@ export function UploadWizard({ songId }: { songId: string | 'new' }) {
   const [artist, setArtist] = useState('')
   const [language, setLanguage] = useState<Language>('unknown')
   const [creating, setCreating] = useState(false)
-  const [separating, setSeparating] = useState(false)
 
   const processing = song ? song.status === 'processing' || song.status === 'pending' : false
   const liveEvent = useSongEvents(song?.id ?? null, !!song)
@@ -80,19 +78,6 @@ export function UploadWizard({ songId }: { songId: string | 'new' }) {
       toast(err instanceof Error ? err.message : String(err), 'error')
     } finally {
       setCreating(false)
-    }
-  }
-
-  const generateInstrumental = async () => {
-    if (!song) return
-    setSeparating(true)
-    try {
-      await separate(song.id)
-      await refreshSong()
-    } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), 'error')
-    } finally {
-      setSeparating(false)
     }
   }
 
@@ -149,7 +134,7 @@ export function UploadWizard({ songId }: { songId: string | 'new' }) {
               />
               <FileDrop
                 label="Instrumental audio (no vocals)"
-                hint="Optional — or generate it from the original below"
+                hint="Optional — auto-generated from the original if you don't provide one"
                 accept={AUDIO_ACCEPT}
                 done={song.has_instrumental}
                 onFile={async (file, onProgress) => {
@@ -196,11 +181,8 @@ export function UploadWizard({ songId }: { songId: string | 'new' }) {
             </div>
 
             {song.has_original && !song.has_instrumental ? (
-              <div className="wizard-separate">
-                <button className="primary" disabled={separating || processing} onClick={() => void generateInstrumental()}>
-                  {separating ? 'Starting…' : 'Generate instrumental (remove vocals)'}
-                </button>
-                <span className="hint">Runs on the local server; takes a few minutes.</span>
+              <div className="hint">
+                An instrumental is being generated automatically (vocal removal) — watch progress below.
               </div>
             ) : null}
             {song.has_instrumental && song.instrumental_source === 'generated' ? (

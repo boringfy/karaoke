@@ -97,6 +97,9 @@ export class PlaybackEngine {
     return this.original
   }
 
+  /** True when the MV is much shorter than the audio and repeats. */
+  private videoLoops = false
+
   private get slaves(): HTMLMediaElement[] {
     const out: HTMLMediaElement[] = []
     if (this.song?.has_instrumental && this.song?.has_original) {
@@ -172,6 +175,19 @@ export class PlaybackEngine {
       return
     }
     if (token !== this.loadToken) return
+
+    // MV shorter than the audio (album track over a TV-size video): loop the
+    // video when the audio is much longer (>1.5x), otherwise let it end and
+    // freeze on the last frame while the audio plays out.
+    this.videoLoops = false
+    this.video.loop = false
+    if (song.has_video) {
+      const vd = this.video.duration
+      if (Number.isFinite(vd) && vd > 0 && this.getDuration() > 1.5 * vd) {
+        this.videoLoops = true
+        this.video.loop = true
+      }
+    }
 
     // Default to instrumental (karaoke mode) when both tracks exist.
     this.track = song.has_instrumental ? 'instrumental' : 'original'
@@ -281,9 +297,25 @@ export class PlaybackEngine {
     const clamped = Math.min(Math.max(t, 0), this.getDuration() || t)
     this.lastSeekAt = performance.now()
     for (const el of this.activeElements) {
-      el.currentTime = clamped
+      el.currentTime = el === this.video ? this.videoTargetTime(clamped) : clamped
+    }
+    if (this.status === 'playing') {
+      // A slave that had ended (frozen MV) stays paused after a seek back;
+      // kick it so the picture moves again.
+      for (const el of this.activeElements) {
+        if (el.paused) void el.play().catch(() => undefined)
+      }
     }
     if (this.status === 'ended') this.setStatus('paused')
+  }
+
+  /** Where the MV should be for audio time `t` (modulo when looping, clamped
+   * to the final frame otherwise). */
+  private videoTargetTime(t: number): number {
+    const vd = this.video.duration
+    if (!Number.isFinite(vd) || vd <= 0) return t
+    if (this.videoLoops) return t % vd
+    return Math.min(t, vd)
   }
 
   seekBy(delta: number): void {
@@ -328,14 +360,23 @@ export class PlaybackEngine {
     if (performance.now() - this.lastSeekAt < SEEK_SETTLE_MS) return
     const masterTime = this.master.currentTime
     for (const slave of this.slaves) {
-      if (slave.ended) continue // e.g. MV shorter than audio: freeze last frame
-      const delta = slave.currentTime - masterTime
+      if (slave.ended) continue // MV shorter than audio (no loop): freeze last frame
+      const isLoopingVideo = slave === this.video && this.videoLoops
+      const target = isLoopingVideo ? this.videoTargetTime(masterTime) : masterTime
+      let delta = slave.currentTime - target
+      if (isLoopingVideo) {
+        // Wrap-around distance: video at 0.1s vs target 179.9s is 0.2s apart,
+        // not 179.8 — never hard-resync across the loop seam.
+        const vd = this.video.duration
+        if (delta > vd / 2) delta -= vd
+        else if (delta < -vd / 2) delta += vd
+      }
       if (Math.abs(delta) <= DRIFT_SOFT_S) {
         if (slave.playbackRate !== 1) slave.playbackRate = 1
       } else if (Math.abs(delta) <= DRIFT_HARD_S) {
         slave.playbackRate = 1 - Math.min(Math.max(delta * 0.5, -0.04), 0.04)
       } else {
-        slave.currentTime = masterTime
+        slave.currentTime = target
         slave.playbackRate = 1
         if (slave.paused) void slave.play().catch(() => undefined)
       }
@@ -347,8 +388,9 @@ export class PlaybackEngine {
     const masterTime = this.master.currentTime
     for (const slave of this.slaves) {
       if (slave.ended) continue
-      if (Math.abs(slave.currentTime - masterTime) > DRIFT_SOFT_S) {
-        slave.currentTime = masterTime
+      const target = slave === this.video ? this.videoTargetTime(masterTime) : masterTime
+      if (Math.abs(slave.currentTime - target) > DRIFT_SOFT_S) {
+        slave.currentTime = target
       }
     }
   }
