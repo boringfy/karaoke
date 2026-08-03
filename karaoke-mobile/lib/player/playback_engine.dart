@@ -76,24 +76,30 @@ class PlaybackEngine extends ChangeNotifier {
     }
 
     if (song.hasVideo) {
-      final url = api.videoUrl(song.id);
-      final file = await cache.resolve('${song.id}.video.mp4', url);
-      // mixWithOthers: the muted MV must never touch Android audio focus —
-      // focus grabs/abandons at its play/complete transitions pause the
-      // just_audio tracks (heard as playback freezing at the video's end).
-      final opts = VideoPlayerOptions(mixWithOthers: true);
-      final v = file != null
-          ? VideoPlayerController.file(file, videoPlayerOptions: opts)
-          : VideoPlayerController.networkUrl(Uri.parse(url), videoPlayerOptions: opts);
-      await v.initialize();
-      await v.setVolume(0); // audio comes from the audio players
-      // MV shorter than the audio: loop it when the audio is much longer
-      // (>1.5x); otherwise it ends and freezes on the last frame.
-      final vd = v.value.duration;
-      _videoLoops = vd > Duration.zero &&
-          _duration.inMilliseconds > 1.5 * vd.inMilliseconds;
-      await v.setLooping(_videoLoops);
-      _video = v;
+      // Best-effort: a video that can't load (server down, not yet cached)
+      // must degrade to audio-only playback, never block the song.
+      try {
+        final url = api.videoUrl(song.id);
+        final file = await cache.resolve('${song.id}.video.mp4', url);
+        // mixWithOthers: the muted MV must never touch Android audio focus —
+        // focus grabs/abandons at its play/complete transitions pause the
+        // just_audio tracks (heard as playback freezing at the video's end).
+        final opts = VideoPlayerOptions(mixWithOthers: true);
+        final v = file != null
+            ? VideoPlayerController.file(file, videoPlayerOptions: opts)
+            : VideoPlayerController.networkUrl(Uri.parse(url), videoPlayerOptions: opts);
+        await v.initialize();
+        await v.setVolume(0); // audio comes from the audio players
+        // MV shorter than the audio: loop it when the audio is much longer
+        // (>1.5x); otherwise it ends and freezes on the last frame.
+        final vd = v.value.duration;
+        _videoLoops = vd > Duration.zero &&
+            _duration.inMilliseconds > 1.5 * vd.inMilliseconds;
+        await v.setLooping(_videoLoops);
+        _video = v;
+      } catch (_) {
+        _video = null;
+      }
     }
 
     _applyVolumes(immediate: true);
