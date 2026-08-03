@@ -1,11 +1,13 @@
 """Align known lyrics to audio; the downloaded lyric text is always ground
 truth, Whisper only supplies timing.
 
-Space-delimited languages use transcription-based alignment: a free Whisper
-transcription is sequence-aligned against the downloaded words so each word
+All languages use transcription-based alignment first: a free Whisper
+transcription is sequence-aligned against the downloaded lyrics so each unit
 inherits its real sung time, instrumental gaps stay empty, and lyric lines a
-short clip never reaches are trimmed off. CJK (and any case that yields no
-usable anchors) falls back to stable-ts forced alignment.
+short clip never reaches are trimmed off. Space-delimited languages match at
+the word level; CJK matches at the character level (katakana folded to
+hiragana so kana spelling differences still anchor). Any case that yields no
+usable anchors falls back to stable-ts forced alignment.
 
 Runs on the separated vocal stem when available (more accurate), otherwise on
 the original mix. Heavy imports are local so the server runs without ML deps
@@ -19,10 +21,13 @@ import difflib
 import logging
 import re
 import threading
+import unicodedata
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from ..config import get_settings
+from ..media import ffmpeg
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +38,14 @@ _model_key: tuple[str, str, str] | None = None
 # Sanity bounds: singing rate outside these marks a line as misaligned.
 CJK_CHARS_PER_SEC = (0.5, 25.0)
 EN_WORDS_PER_SEC = (0.3, 6.0)
+
+# Assumed singing rates for lines whose timing had to be interpolated from LRC
+# anchors. Deliberately conservative (slightly slower than typical singing):
+# a wipe that runs a touch long is far less jarring than one still half done
+# when the line has been fully sung. Used to cap the token spread so a line
+# followed by a held note or instrumental break doesn't crawl across the gap.
+INTERP_CJK_RATE = 2.5  # chars / sec
+INTERP_WORD_RATE = 2.0  # words / sec
 
 
 class AlignmentUnavailable(RuntimeError):
@@ -129,17 +142,24 @@ def _explode_cjk(tokens: list[AlignedToken]) -> list[AlignedToken]:
 def _line_ok(line: AlignedLine, cjk: bool, threshold: float) -> bool:
     if not line.tokens:
         return False
-    dur = line.end - line.start
-    if dur <= 0:
+    if line.end - line.start <= 0:
         return False
     if line.score is not None and line.score < threshold:
         return False
-    rate = len(line.tokens) / dur
+    # Rate over the token span, not the segment window: segment ends absorb
+    # trailing melisma / VAD padding, which would deflate the rate and reject
+    # perfectly aligned lines.
+    span = line.tokens[-1].end - line.tokens[0].start
+    if span <= 0:
+        return False
+    rate = len(line.tokens) / span
     lo, hi = CJK_CHARS_PER_SEC if cjk else EN_WORDS_PER_SEC
     return lo <= rate <= hi
 
 
-def _interpolate_failed(lines: list[AlignedLine], anchors: list[float | None]) -> None:
+def _interpolate_failed(
+    lines: list[AlignedLine], anchors: list[float | None], cjk: bool
+) -> None:
     """Give failed lines timing from LRC anchors, or spread them evenly
     between their aligned neighbors."""
     n = len(lines)
@@ -161,13 +181,35 @@ def _interpolate_failed(lines: list[AlignedLine], anchors: list[float | None]) -
             )
             start, end = prev_end, max(next_start, prev_end + 0.5)
         line.start, line.end = start, end
-        # Distribute tokens evenly across the interpolated window.
+        # Distribute tokens evenly, but only over a plausible singing duration:
+        # the anchor window runs to the *next* line and may contain a held note
+        # or an instrumental break the wipe must not crawl across. The line
+        # itself stays displayed for the full window (line.end untouched).
         units = [t.text for t in line.tokens] or list(line.text.replace(" ", "")) or [line.text]
-        step = (end - start) / len(units)
+        rate = INTERP_CJK_RATE if cjk else INTERP_WORD_RATE
+        tok_end = min(end, start + max(2.0, len(units) / rate))
+        step = (tok_end - start) / len(units)
         line.tokens = [
             AlignedToken(u, start + k * step, start + (k + 1) * step, None)
             for k, u in enumerate(units)
         ]
+
+
+def _cap_final_token(toks: list[AlignedToken]) -> None:
+    """Cap the last token's duration relative to the line's median token.
+
+    Aligner segment tails absorb held notes *and* VAD padding / silence. A slow
+    fill on a genuinely held final note is desirable karaoke behavior (it says
+    "keep holding"), so real holds of a few seconds survive the 3x-median cap;
+    ten seconds of absorbed silence does not.
+    """
+    if not toks:
+        return
+    durs = sorted(t.end - t.start for t in toks)
+    median = durs[len(durs) // 2]
+    cap = toks[-1].start + max(1.0, 3 * median)
+    if toks[-1].end > cap:
+        toks[-1].end = cap
 
 
 def _enforce_monotonic(lines: list[AlignedLine]) -> None:
@@ -220,6 +262,7 @@ def _align_forced(
             ]
             if cjk:
                 toks = _explode_cjk(toks)
+            _cap_final_token(toks)
             ps = [t.p for t in toks if t.p is not None]
             line = AlignedLine(
                 text=src,
@@ -234,7 +277,7 @@ def _align_forced(
             line.alignment = "interpolated"
         aligned.append(line)
 
-    _interpolate_failed(aligned, anchors or [None] * len(aligned))
+    _interpolate_failed(aligned, anchors or [None] * len(aligned), cjk)
     _enforce_monotonic(aligned)
 
     scores = [ln.score for ln in aligned if ln.alignment == "aligned" and ln.score is not None]
@@ -245,14 +288,19 @@ def _align_forced(
     return aligned, confidence
 
 
-# --- Transcription-based alignment (primary for space-delimited languages) ---
+# --- Transcription-based alignment (primary path for all languages) ---
 #
 # Downloaded lyrics are the source of truth for *text*; a free Whisper
-# transcription supplies *timing* only. We sequence-align the two word streams
-# so each downloaded word inherits its real sung time, leaving instrumental
-# gaps empty, and trim lyric lines the (possibly short) audio never reaches.
+# transcription supplies *timing* only. We sequence-align the two unit streams
+# (words for space-delimited languages, characters for CJK) so each downloaded
+# unit inherits its real sung time, leaving instrumental gaps empty, and trim
+# lyric lines the (possibly short) audio never reaches.
 
-_CREDIT = re.compile(r"作词|作詞|作曲|编曲|編曲|作曲家|lyricist|composer|arrang", re.I)
+_CREDIT = re.compile(
+    r"作词|作詞|作曲|编曲|編曲|作曲家|制作|製作|监制|監製|出品|发行|發行"
+    r"|混音|录音|錄音|母带|母帶|企划|企劃|プロデュ"
+    r"|lyricist|composer|arrang|produc|mixed by|mastered", re.I,
+)
 _NORM = re.compile(r"[^a-z0-9']")
 
 
@@ -260,14 +308,93 @@ def _norm_word(s: str) -> str:
     return _NORM.sub("", s.lower().replace("’", "'").replace("‘", "'"))
 
 
+_CJK_PUNCT = set("、。，．・「」『』（）【】《》！？…〜～”“‘’\"'!?,.:;()[]<>-—/｜|")
+
+
+def _fold_kana(ch: str) -> str:
+    # Katakana -> hiragana: U+30A1..U+30F6 maps down by 0x60 (covers ヴ->ゔ).
+    # ー (U+30FC) is outside the range and stays as-is; Whisper emits it too,
+    # so both streams carry it consistently.
+    o = ord(ch)
+    return chr(o - 0x60) if 0x30A1 <= o <= 0x30F6 else ch
+
+
+@lru_cache(maxsize=8192)
+def _fold_simplified(ch: str) -> str:
+    """Fold a CJK ideograph to Simplified via OpenCC — FOR MATCHING ONLY.
+
+    Whisper's Chinese output freely mixes Traditional and Simplified forms
+    while lyrics are usually one or the other; the mismatched codepoints
+    (讀 vs 读) would never anchor. Folding BOTH streams through the same
+    transform keeps matching consistent without touching display text."""
+    o = ord(ch)
+    if not (0x3400 <= o <= 0x9FFF or 0xF900 <= o <= 0xFAFF):
+        return ch
+    try:
+
+        conv = _fold_simplified_cc()
+        out = conv.convert(ch)
+        return out if len(out) == 1 else ch
+    except Exception:  # noqa: BLE001 - matching still works unfolded
+        return ch
+
+
+@lru_cache(maxsize=1)
+def _fold_simplified_cc():
+    from opencc import OpenCC
+
+    return OpenCC("t2s")
+
+
+def _norm_char(ch: str) -> str:
+    """Normalize one character for matching: NFKC, lowercase, katakana folded
+    to hiragana, CJK ideographs folded to Simplified (both streams get the
+    same fold, so it only ever helps matching). Spaces and punctuation
+    normalize to '' (never match)."""
+    ch = unicodedata.normalize("NFKC", ch).lower()
+    if not ch:
+        return ""
+    ch = ch[0]  # NFKC can expand (e.g. ㍿); keep the leading char
+    if ch.isspace() or ch in _CJK_PUNCT:
+        return ""
+    return _fold_simplified(_fold_kana(ch))
+
+
 def _lyric_lines(lines: list[str]) -> list[str]:
     """Drop blank lines and metadata credit lines from downloaded lyrics."""
     return [ln.strip() for ln in lines if ln.strip() and not _CREDIT.search(ln)]
 
 
-def _transcribe_words(audio_path: Path, lang: str | None) -> list[tuple[str, float, float, float]]:
-    """Whisper transcription -> flat (norm_word, start, end, prob). Timing only;
-    the decoded words themselves are never shown to the user."""
+def _lyric_units(lyr: list[str], cjk: bool) -> list[list]:
+    """Flatten lyrics to [line_idx, original, norm, start, end, prob] rows.
+
+    Word mode: one row per whitespace-separated word (rows that normalize to
+    nothing are dropped, as before). Char mode: one row per non-space character.
+    Punctuation rows are kept with norm='' — they can never anchor, but they
+    must become tokens because the furigana stage consumes exactly one token
+    per character of the line text.
+    """
+    dl: list[list] = []
+    for li, text in enumerate(lyr):
+        if cjk:
+            for ch in text:
+                if ch.isspace():
+                    continue
+                dl.append([li, ch, _norm_char(ch), None, None, None])
+        else:
+            for word in text.split():
+                n = _norm_word(word)
+                if n:
+                    dl.append([li, word, n, None, None, None])
+    return dl
+
+
+def _transcribe_units(
+    audio_path: Path, lang: str | None, cjk: bool
+) -> list[tuple[str, float, float, float]]:
+    """Whisper transcription -> flat (norm_unit, start, end, prob). Timing only;
+    the decoded text itself is never shown to the user. In char mode each
+    Whisper word is exploded into per-character timings (even split)."""
     model = _load_model()
     result = model.transcribe(
         str(audio_path), language=lang, word_timestamps=True, vad=False,
@@ -276,80 +403,127 @@ def _transcribe_words(audio_path: Path, lang: str | None) -> list[tuple[str, flo
         # lyrics, which would mis-anchor against repeated choruses.
         condition_on_previous_text=False,
     )
-    words: list[tuple[str, float, float, float]] = []
+    units: list[tuple[str, float, float, float]] = []
     for seg in result.segments:
         for w in seg.words or []:
-            n = _norm_word(w.word)
-            if n:
-                words.append(
-                    (n, float(w.start), float(w.end), float(getattr(w, "probability", 0.0) or 0.0))
-                )
-    return words
+            s, e = float(w.start), float(w.end)
+            p = float(getattr(w, "probability", 0.0) or 0.0)
+            if cjk:
+                chars = [c for c in (_norm_char(ch) for ch in w.word) if c]
+                if not chars:
+                    continue
+                dur = max(e - s, 0.0) / len(chars)
+                for i, c in enumerate(chars):
+                    units.append((c, s + i * dur, s + (i + 1) * dur, p))
+            else:
+                n = _norm_word(w.word)
+                if n:
+                    units.append((n, s, e, p))
+    return units
 
 
 def _align_by_transcription(
-    audio_path: Path, lines: list[str], language: str | None
+    audio_path: Path,
+    lines: list[str],
+    language: str | None,
+    anchors: list[float | None] | None = None,
 ) -> tuple[list[AlignedLine], float]:
-    lyr = _lyric_lines(lines)
+    # Filter blank/credit lines, keeping each surviving line's LRC anchor.
+    lyr: list[str] = []
+    lyr_anchors: list[float | None] = []
+    for i, raw in enumerate(lines):
+        text = raw.strip()
+        if not text or _CREDIT.search(text):
+            continue
+        lyr.append(text)
+        lyr_anchors.append(anchors[i] if anchors and i < len(anchors) else None)
     if not lyr:
         return [], 0.0
-    wh = _transcribe_words(audio_path, language)
+    # Route on the declared language, not the text: downloaded credits may
+    # carry stray CJK that would misclassify an English song.
+    if language in ("zh", "ja"):
+        cjk = True
+    elif language == "en":
+        cjk = False
+    else:
+        cjk = _is_cjk_lang(None, "\n".join(lyr))
+
+    wh = _transcribe_units(audio_path, language, cjk)
     if not wh:
         return [], 0.0
 
-    # Flatten downloaded words: [line_idx, original, norm, start, end, prob|None]
-    dl: list[list] = []
-    for li, text in enumerate(lyr):
-        for word in text.split():
-            n = _norm_word(word)
-            if n:
-                dl.append([li, word, n, None, None, None])
+    # Flatten downloaded lyrics: [line_idx, original, norm, start, end, prob|None]
+    dl = _lyric_units(lyr, cjk)
     if not dl:
         return [], 0.0
 
-    # difflib LCS blocks tolerate skipped verses / repeated choruses; within a
-    # 'replace' block, pair words positionally so near-mishears still anchor.
-    sm = difflib.SequenceMatcher(a=[d[2] for d in dl], b=[w[0] for w in wh], autojunk=False)
-    anchored: list[int] = []
+    # Only rows with a non-empty norm take part in matching (char mode keeps
+    # punctuation rows with norm='' so they still become tokens later).
+    midx = [i for i, d in enumerate(dl) if d[2]]
+    if not midx:
+        return [], 0.0
 
-    def _anchor(i: int, j: int) -> None:
+    # difflib LCS blocks tolerate skipped verses / repeated choruses; within a
+    # 'replace' block, pair units positionally so near-mishears still anchor.
+    sm = difflib.SequenceMatcher(
+        a=[dl[i][2] for i in midx], b=[w[0] for w in wh], autojunk=False
+    )
+    anchored: list[int] = []
+    jmap: dict[int, int] = {}  # transcript unit -> lyric line it anchored to
+
+    def _anchor(mi: int, j: int) -> None:
+        i = midx[mi]
         dl[i][3], dl[i][4], dl[i][5] = wh[j][1], wh[j][2], wh[j][3]
         anchored.append(i)
+        jmap[j] = dl[i][0]
 
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
             for k in range(i2 - i1):
                 _anchor(i1 + k, j1 + k)
         elif tag == "replace":
+            # Single-char units never clear the 0.45 ratio, so this pairing is
+            # effectively word-mode only; kana folding already put same-sound
+            # CJK chars into 'equal' blocks.
             for k in range(min(i2 - i1, j2 - j1)):
-                if difflib.SequenceMatcher(None, dl[i1 + k][2], wh[j1 + k][0]).ratio() >= 0.45:
+                if (
+                    difflib.SequenceMatcher(
+                        None, dl[midx[i1 + k]][2], wh[j1 + k][0]
+                    ).ratio()
+                    >= 0.45
+                ):
                     _anchor(i1 + k, j1 + k)
 
     if not anchored:
         return [], 0.0
 
-    # Determine the contiguous band of lyric lines the audio actually covers.
-    # A short clip is a sub-range of the full lyrics; a line only counts as
-    # really sung if a real fraction of *its own* words anchored (a lone stray
-    # match from a repeated chorus or a hallucinated outro must not extend the
-    # band). Keep the run of solid lines, stopping at the first big gap. This is
-    # what "cut the lyrics short" means for clips.
+    # Keep only the lyric lines the audio actually covers. A line counts as
+    # really sung ("solid") when a real fraction of *its own* units anchored —
+    # a lone stray match from a repeated chorus or a hallucinated outro doesn't
+    # qualify. Solid lines may form SEVERAL bands, not one: a TV-size / short
+    # edit often skips a middle verse of the full lyrics and then sings the
+    # finale, so stopping at the first gap would wrongly drop the ending.
+    # Small gaps between solid lines (mis-heard but sung lines) are bridged;
+    # big gaps (the skipped verse) are dropped. Unmatchable punctuation rows
+    # are excluded so they don't dilute a line's anchored ratio.
     total: dict[int, int] = {}
     hits: dict[int, int] = {}
-    for d in dl:
+    for i in midx:
+        d = dl[i]
         total[d[0]] = total.get(d[0], 0) + 1
         if d[5] is not None:
             hits[d[0]] = hits.get(d[0], 0) + 1
     solid = sorted(li for li, n in total.items() if hits.get(li, 0) / n >= 0.4)
     if not solid:
         return [], 0.0
-    kept_first = kept_last = solid[0]
-    for li in solid[1:]:
-        if li - kept_last <= 8:
-            kept_last = li
-        else:
-            break
-    dl = [d for d in dl if kept_first <= d[0] <= kept_last]
+    keep: set[int] = set(solid)
+    for a, b in zip(solid, solid[1:], strict=False):
+        if b - a <= 8:
+            keep.update(range(a + 1, b))
+    # Transcript units whose anchor survived the trim; the rest are free for
+    # the out-of-order recovery pass below.
+    used_j = {j for j, li in jmap.items() if li in keep}
+    dl = [d for d in dl if d[0] in keep]
 
     # Interpolate un-anchored runs evenly between their bounding anchors.
     i = 0
@@ -369,7 +543,6 @@ def _align_by_transcription(
             i += 1
 
     # Group into lines with monotonically non-decreasing token starts.
-    cjk = _is_cjk_lang(language, "\n".join(lyr))
     by_line: dict[int, list[AlignedToken]] = {}
     cursor = 0.0
     for li, original, _n, s, e, p in dl:
@@ -393,10 +566,265 @@ def _align_by_transcription(
             )
         )
 
+    _recover_reordered(aligned, lyr, wh, used_j, cjk)
+    _recover_gaps(aligned, lyr, audio_path, language, cjk)
+    _recover_from_anchors(aligned, lyr, lyr_anchors, cjk, audio_path)
+    aligned.sort(key=lambda ln: (ln.start, ln.end))
+
     probs = [d[5] for d in dl if d[5] is not None]
-    anchored_ratio = len(probs) / len(dl) if dl else 0.0
+    matchable = sum(1 for d in dl if d[2])
+    anchored_ratio = len(probs) / matchable if matchable else 0.0
     mean_p = sum(probs) / len(probs) if probs else 0.0
     return aligned, round(anchored_ratio * mean_p, 4)
+
+
+def _recover_from_anchors(
+    aligned: list[AlignedLine],
+    lyr: list[str],
+    anchors: list[float | None],
+    cjk: bool,
+    audio_path: Path,
+) -> None:
+    """Last resort for lines every audio-based pass missed: place them at
+    their synced-LRC timestamp.
+
+    Some deliveries defeat ASR outright (e.g. 曹操's low spoken-style opening
+    hook, which Whisper hears as streaming-site watermark boilerplate). When
+    the lyric candidate carries LRC times, those are trustworthy for the
+    recording they were synced to — so a missing line is emitted at its LRC
+    anchor, but only when (a) the LRC timeline plausibly fits this recording
+    (last anchor within the audio; a full-song LRC over a TV-size clip is
+    rejected wholesale) and (b) the anchor window is not already covered.
+    Marked "interpolated": timing is per-line, not heard per-character."""
+    if not aligned or not any(a is not None for a in anchors):
+        return
+    covered = [(ln.start, ln.end) for ln in aligned]
+    last_anchor = max(a for a in anchors if a is not None)
+    total = ffmpeg.probe_duration(Path(audio_path)) if Path(audio_path).exists() else None
+    horizon = total if total else max(e for _, e in covered) + 60.0
+    if last_anchor > horizon + 5.0:
+        return  # LRC timeline is for a different edit of the song
+    for li, text in enumerate(lyr):
+        a = anchors[li] if li < len(anchors) else None
+        if a is None or a < 0:
+            continue
+        nxt = next(
+            (anchors[j] for j in range(li + 1, len(anchors)) if anchors[j] is not None),
+            None,
+        )
+        end = min(nxt, a + 8.0) if nxt is not None and nxt > a else a + 4.0
+        if end - a < 0.5:
+            continue
+        if any(a < ce - 0.25 and end > cs + 0.25 for cs, ce in covered):
+            continue
+        rows = _lyric_units([text], cjk)
+        if not rows:
+            continue
+        rate = INTERP_CJK_RATE if cjk else INTERP_WORD_RATE
+        tok_end = min(end, a + max(2.0, len(rows) / rate))
+        step = (tok_end - a) / len(rows)
+        toks = [
+            AlignedToken(r[1], a + k * step, a + (k + 1) * step, None)
+            for k, r in enumerate(rows)
+        ]
+        aligned.append(
+            AlignedLine(
+                text=text,
+                start=round(a, 3),
+                end=round(end, 3),
+                tokens=toks,
+                score=None,
+                alignment="interpolated",
+            )
+        )
+        covered.append((a, end))
+
+
+def _recover_gaps(
+    aligned: list[AlignedLine],
+    lyr: list[str],
+    audio_path: Path,
+    language: str | None,
+    cjk: bool,
+) -> None:
+    """Re-transcribe large spans the subtitle doesn't cover.
+
+    Whisper reliably hallucinates boilerplate (fake 作詞/作曲 credit lines)
+    across quiet song intros — even on a clean vocal stem, even with VAD —
+    swallowing softly-sung opening lines. Starting the decode window at the
+    VAD-detected vocal onset snaps the decoder out of it. Each gap window is
+    transcribed separately and fed through the same text-matching recovery as
+    reordered sections, so only stretches that genuinely match lyric lines
+    produce subtitles (hallucinations match nothing and are dropped).
+    """
+    if not aligned or not Path(audio_path).exists():
+        return
+    spans = sorted((ln.start, ln.end) for ln in aligned)
+    gaps: list[tuple[float, float]] = []
+    if spans[0][0] > 12.0:
+        gaps.append((0.0, spans[0][0] + 1.0))
+    prev_end = spans[0][1]
+    for s, e in spans[1:]:
+        if s - prev_end > 15.0:
+            gaps.append((max(0.0, prev_end - 1.0), s + 1.0))
+        prev_end = max(prev_end, e)
+    total = ffmpeg.probe_duration(Path(audio_path))
+    if total and total - prev_end > 12.0:
+        gaps.append((max(0.0, prev_end - 1.0), total))
+
+    for gs, ge in gaps[:4]:
+        try:
+            units = _transcribe_window(audio_path, language, cjk, gs, ge)
+        except Exception:  # noqa: BLE001 - recovery is strictly best-effort
+            log.exception("gap re-transcription failed for %.1f-%.1fs", gs, ge)
+            continue
+        if units:
+            _recover_reordered(aligned, lyr, units, set(), cjk)
+
+
+def _transcribe_window(
+    audio_path: Path, language: str | None, cjk: bool, start: float, end: float
+) -> list[tuple[str, float, float, float]]:
+    """Transcribe [start, end] of the audio, beginning at the first VAD-detected
+    vocal onset inside the window; unit times are absolute (offset applied)."""
+    import tempfile
+    import wave
+
+    import numpy as np
+    from faster_whisper.audio import decode_audio
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    sr = 16000
+    audio = decode_audio(str(audio_path), sampling_rate=sr)
+    window = audio[int(start * sr) : int(end * sr)]
+    if len(window) < sr:
+        return []
+    speech = get_speech_timestamps(window, VadOptions())
+    if not speech:
+        return []  # nothing sung here (a real instrumental break)
+    onset = max(0.0, speech[0]["start"] / sr - 0.3)
+    offset = start + onset
+    clip = window[int(onset * sr) :]
+
+    import os
+
+    fd, tmp_name = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        with wave.open(str(tmp), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes((np.clip(clip, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
+        units = _transcribe_units(tmp, language, cjk)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return [(n, s + offset, e + offset, p) for n, s, e, p in units]
+
+
+def _recover_reordered(
+    aligned: list[AlignedLine],
+    lyr: list[str],
+    wh: list[tuple[str, float, float, float]],
+    used_j: set[int],
+    cjk: bool,
+) -> None:
+    """Rescue sections sung OUT of lyric order (appended to `aligned`).
+
+    A TV-size or concert edit may open with the chorus or repeat it; a
+    monotonic global alignment can never anchor those. Group the transcript
+    units the first pass did not consume into time-contiguous segments, match
+    each segment's text against every lyric line, and re-emit strong matches
+    at the segment's real time — a line may then rightfully appear more than
+    once. Recurses on the leftovers so a twice-sung chorus yields both copies.
+    """
+    sep = "" if cjk else " "
+    line_norms: dict[int, str] = {}
+    for li, text in enumerate(lyr):
+        if cjk:
+            units = [c for c in (_norm_char(ch) for ch in text) if c]
+        else:
+            units = [w for w in (_norm_word(x) for x in text.split()) if w]
+        if units:
+            line_norms[li] = sep.join(units)
+
+    covered = [(ln.start, ln.end) for ln in aligned]
+
+    def _is_covered(s: float, e: float) -> bool:
+        return any(s < ce - 0.5 and e > cs + 0.5 for cs, ce in covered)
+
+    def _emit(seg: list[int], depth: int) -> None:
+        if depth > 4 or len(seg) < 3:
+            return
+        # Character offset of each unit inside the joined segment text.
+        offs: list[int] = []
+        pos = 0
+        parts: list[str] = []
+        for j in seg:
+            offs.append(pos)
+            parts.append(wh[j][0])
+            pos += len(wh[j][0]) + len(sep)
+        seg_text = sep.join(parts)
+
+        best: tuple[float, int, int, int] | None = None  # coverage, li, a1, a2
+        for li, ln_norm in line_norms.items():
+            smx = difflib.SequenceMatcher(None, seg_text, ln_norm, autojunk=False)
+            blocks = [b for b in smx.get_matching_blocks() if b.size]
+            if not blocks:
+                continue
+            coverage = sum(b.size for b in blocks) / len(ln_norm)
+            if coverage < 0.6:
+                continue
+            a1, a2 = blocks[0].a, blocks[-1].a + blocks[-1].size
+            if best is None or coverage > best[0]:
+                best = (coverage, li, a1, a2)
+        if best is None:
+            return
+        _cov, li, a1, a2 = best
+        # Map the matched char window back to unit indices.
+        u1 = max(k for k, o in enumerate(offs) if o <= a1)
+        u2 = min((k for k, o in enumerate(offs) if o >= a2), default=len(seg) - 1)
+        u2 = max(u2, u1 + 1)
+        s = wh[seg[u1]][1]
+        e = wh[seg[min(u2, len(seg) - 1)]][2]
+        if e - s >= 1.0 and not _is_covered(s, e):
+            rows = _lyric_units([lyr[li]], cjk)
+            if rows:
+                step = (e - s) / len(rows)
+                toks = [
+                    AlignedToken(r[1], s + k * step, s + (k + 1) * step, None)
+                    for k, r in enumerate(rows)
+                ]
+                if cjk:
+                    toks = _explode_cjk(toks)
+                ps = [wh[j][3] for j in seg[u1 : u2 + 1]]
+                aligned.append(
+                    AlignedLine(
+                        text=lyr[li],
+                        start=round(s, 3),
+                        end=round(e, 3),
+                        tokens=toks,
+                        score=round(sum(ps) / len(ps), 4) if ps else None,
+                        alignment="aligned",
+                    )
+                )
+                covered.append((s, e))
+        # Whatever surrounds the matched window may hold more lines.
+        _emit(seg[:u1], depth + 1)
+        _emit(seg[u2 + 1 :], depth + 1)
+
+    seg: list[int] = []
+    for j in range(len(wh)):
+        if j in used_j:
+            _emit(seg, 0)
+            seg = []
+            continue
+        if seg and wh[j][1] - wh[seg[-1]][2] > 1.5:
+            _emit(seg, 0)
+            seg = []
+        seg.append(j)
+    _emit(seg, 0)
 
 
 def align_lyrics(
@@ -408,28 +836,19 @@ def align_lyrics(
     """Blocking (call from a worker thread). Returns (aligned lines, overall
     confidence 0-1).
 
-    Space-delimited languages use transcription-based alignment (downloaded text
-    + Whisper timing, trimmed to the audio). CJK falls back to stable-ts forced
-    alignment, as does any case where transcription yields no usable anchors.
+    Transcription-based alignment is tried first for every language (downloaded
+    text + Whisper timing, word-level for space-delimited languages, char-level
+    for CJK, trimmed to the audio). stable-ts forced alignment is the fallback
+    when transcription yields no usable anchors.
     """
     _load_model()  # surfaces AlignmentUnavailable early if ML deps are missing
-    # Route on the declared language, not the text: downloaded credits may carry
-    # stray CJK that would misclassify an English song.
-    if language in ("zh", "ja"):
-        cjk = True
-    elif language == "en":
-        cjk = False
-    else:
-        cjk = _is_cjk_lang(None, "\n".join(_lyric_lines(lines)))
-
-    if not cjk:
-        try:
-            aligned, confidence = _align_by_transcription(audio_path, lines, language)
-        except Exception:  # noqa: BLE001 - never let timing fall over the pipeline
-            log.exception("transcription alignment failed; using forced alignment")
-            aligned, confidence = [], 0.0
-        if aligned:
-            return aligned, confidence
-        log.warning("transcription alignment produced nothing; using forced alignment")
+    try:
+        aligned, confidence = _align_by_transcription(audio_path, lines, language, anchors)
+    except Exception:  # noqa: BLE001 - never let timing fall over the pipeline
+        log.exception("transcription alignment failed; using forced alignment")
+        aligned, confidence = [], 0.0
+    if aligned:
+        return aligned, confidence
+    log.warning("transcription alignment produced nothing; using forced alignment")
 
     return _align_forced(audio_path, lines, language, anchors)

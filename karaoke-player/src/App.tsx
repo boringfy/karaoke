@@ -1,5 +1,6 @@
 import { LibraryView } from './components/library/LibraryView'
 import { PlayerView } from './components/player/PlayerView'
+import { MiniPlayer } from './components/player/MiniPlayer'
 import { ServerUnreachable } from './components/common/ServerUnreachable'
 import { Toasts } from './components/common/Toasts'
 import { UploadWizard } from './components/upload/UploadWizard'
@@ -31,6 +32,7 @@ export default function App() {
         <PlayerView />
       </div>
       {view === 'library' ? <LibraryView /> : null}
+      <MiniPlayer />
       {wizardSongId ? <UploadWizard key={wizardSongId} songId={wizardSongId} /> : null}
       <Toasts />
     </>

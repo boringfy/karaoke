@@ -33,6 +33,12 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # Make app-level INFO logs visible however the server is launched (the
+    # console entry point configures logging too, but `python -m uvicorn
+    # karaoke_server.main:app` — e.g. under pm2 — does not).
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     settings = get_settings()
     app = FastAPI(
         title="karaoke-server",

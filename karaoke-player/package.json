@@ -3,6 +3,7 @@
   "productName": "Karaoke Player",
   "version": "0.1.0",
   "description": "Local karaoke desktop player for karaoke-server",
+  "license": "MIT",
   "private": true,
   "main": "dist-electron/main.js",
   "scripts": {

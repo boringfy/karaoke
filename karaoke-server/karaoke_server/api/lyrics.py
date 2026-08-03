@@ -145,10 +145,16 @@ async def upload_lyrics_file(
 
 @router.post("/refetch", response_model=MessageOut, status_code=202)
 async def refetch_lyrics(song_id: str, session: AsyncSession = Depends(get_session)):
-    """Re-run the lyric search (then re-align if a match is found)."""
+    """Re-run the lyric search (then re-align if a match is found).
+
+    Clears the current candidate selection first: a refetch means "search
+    again and pick the best" — keeping a stale pick would make the new search
+    a no-op (the lyrics stage respects an existing selection)."""
     song = await _get_song(song_id, session)
     if not song.original_path:
         raise HTTPException(409, "upload an original audio file first")
+    for row in song.lyrics_candidates:
+        row.selected = False
     jobs = await enqueue_stages(
         session, song_id, [Stage.lyrics, *REALIGN_STAGES]
     )

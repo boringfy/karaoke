@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 from typing import Literal
 
@@ -8,9 +10,10 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..db import session as db_session
 from ..db.models import AUTO_STAGES, REALIGN_STAGES, Job, Song, SongStatus, Stage
 from ..db.session import get_session
-from ..media import storage
+from ..media import ffmpeg, storage
 from ..pipeline.worker import enqueue_stages
 from ..subtitles import exporters, render
 from ..subtitles.schema import SubtitleDoc
@@ -24,7 +27,75 @@ from .schemas import (
     UploadResult,
 )
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/songs", tags=["songs"])
+
+# Songs with a video transcode currently running (avoid duplicate jobs).
+_transcoding_videos: set[str] = set()
+
+
+async def _transcode_audio_if_needed(song_id: str, src: Path, kind: str) -> None:
+    """Background: give exotic-codec uploads (ALAC, WMA, AIFF...) a lossless
+    FLAC copy — neither Chromium nor Android MediaCodec reliably decodes them.
+    Common codecs (flac/opus/mp3/aac/pcm-le) are left untouched."""
+    codec = await asyncio.to_thread(ffmpeg.probe_audio_codec, src)
+    if codec is None or codec in ffmpeg.PLAYABLE_AUDIO_CODECS:
+        return
+    dest = src.parent / f"{kind}.flac"
+    try:
+        log.info("audio transcode start: song %s %s (%s -> flac)", song_id, kind, codec)
+        await asyncio.to_thread(ffmpeg.transcode_audio_flac, src, dest)
+        async with db_session.session_factory()() as session:
+            song = await session.get(Song, song_id)
+            if song is None:
+                dest.unlink(missing_ok=True)
+                return
+            if kind == "original":
+                song.original_path = str(dest)
+                song.original_format = "flac"
+            else:
+                song.instrumental_path = str(dest)
+            await session.commit()
+        if src != dest:
+            src.unlink(missing_ok=True)
+        log.info("audio transcode done: song %s %s", song_id, kind)
+    except ffmpeg.FfmpegError:
+        log.exception("audio transcode failed for song %s %s; keeping original", song_id, kind)
+
+
+async def _transcode_video_if_needed(song_id: str, src: Path) -> None:
+    """Background: re-encode a just-uploaded video to 8-bit H.264 when it is
+    anything else (HEVC-10bit, AV1, ...), then point the song at the result.
+    The original upload stays playable (if suboptimal) until the swap."""
+    if song_id in _transcoding_videos:
+        return
+    info = await asyncio.to_thread(ffmpeg.probe_video, src)
+    if info is None:
+        return  # not probeable (e.g. test fixtures); leave as-is
+    codec, pix_fmt = info
+    if codec == "h264" and pix_fmt in ("yuv420p", "yuvj420p"):
+        return  # already hardware-decodable everywhere
+    _transcoding_videos.add(song_id)
+    dest = src.parent / "video.mp4"
+    try:
+        log.info("video transcode start: song %s (%s/%s -> h264/yuv420p)",
+                 song_id, codec, pix_fmt)
+        await asyncio.to_thread(ffmpeg.transcode_video_h264, src, dest)
+        async with db_session.session_factory()() as session:
+            song = await session.get(Song, song_id)
+            if song is None:
+                dest.unlink(missing_ok=True)
+                return
+            song.video_path = str(dest)
+            await session.commit()
+        if src != dest:
+            src.unlink(missing_ok=True)
+        log.info("video transcode done: song %s", song_id)
+    except ffmpeg.FfmpegError:
+        log.exception("video transcode failed for song %s; keeping original", song_id)
+    finally:
+        _transcoding_videos.discard(song_id)
 
 _SUBTITLE_MEDIA_TYPES = {
     "json": "application/json",
@@ -161,6 +232,12 @@ async def upload_audio(
         song.original_path = str(path)
         song.original_format = ext.lstrip(".")
         song.source_hash = sha
+        # The audio is the source of truth: replacing it invalidates any
+        # lyric-candidate selection made for the previous recording (e.g. a
+        # TV-size lyric picked for a TV-size clip must not survive an upgrade
+        # to the full album track — scores are duration-sensitive).
+        for row in song.lyrics_candidates:
+            row.selected = False
         jobs = await enqueue_stages(session, song_id, AUTO_STAGES)
         enqueued = [j.stage for j in jobs]
     else:
@@ -171,6 +248,7 @@ async def upload_audio(
         if not song.original_path and song.status == SongStatus.pending.value:
             song.status = SongStatus.ready.value
     await session.commit()
+    asyncio.create_task(_transcode_audio_if_needed(song_id, path, kind))
     return UploadResult(
         song_id=song_id, kind=kind, path_name=path.name, sha256=sha,
         enqueued_stages=enqueued,
@@ -195,6 +273,9 @@ async def upload_video(
     path, sha = await storage.save_upload(dest, "video", file.filename or "", file)
     song.video_path = str(path)
     await session.commit()
+    # Any non-H.264/8-bit source (HEVC-10bit, AV1...) software-decodes and
+    # stutters on every client; convert it in the background.
+    asyncio.create_task(_transcode_video_if_needed(song_id, path))
     return UploadResult(song_id=song_id, kind="video", path_name=path.name, sha256=sha)
 
 
@@ -326,6 +407,9 @@ async def generate_instrumental(
             "an uploaded instrumental already exists; pass ?force=true to "
             "replace it with a generated one",
         )
+    if force and song.instrumental_source == "uploaded":
+        # Drop the "uploaded" marker so stage_separate regenerates over it.
+        song.instrumental_source = None
     active = await session.scalar(
         select(func.count()).select_from(Job).where(
             Job.song_id == song_id,
@@ -354,11 +438,15 @@ async def reprocess(
     ),
     session: AsyncSession = Depends(get_session),
 ):
-    """Re-run the automatic pipeline from a given stage onward."""
+    """Re-run the automatic pipeline from a given stage onward.
+
+    Separation is not repeated here — regenerate the instrumental explicitly via
+    POST /separate. The existing instrumental (uploaded or generated) is kept.
+    """
     song = await _get_song(song_id, session)
     if not song.original_path:
         raise HTTPException(409, "upload an original audio file first")
-    chain = [s for s in AUTO_STAGES]
+    chain = [s for s in AUTO_STAGES if s != Stage.separate]
     idx = chain.index(Stage(from_stage))
     jobs = await enqueue_stages(session, song_id, chain[idx:])
     await session.commit()

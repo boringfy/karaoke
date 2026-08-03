@@ -23,6 +23,19 @@ export async function playSong(song: Song): Promise<void> {
   }
 }
 
+/** Fully stop playback, release the song, and return to the library. */
+export function stopPlayback(): void {
+  engine.unload()
+  usePlayerStore.setState({
+    song: null,
+    subtitle: null,
+    status: 'idle',
+    coarseTime: 0,
+    error: null,
+  })
+  useUiStore.getState().setView('library')
+}
+
 /** Play a song by id (used by the queue, which stores ids only). */
 export async function playSongById(songId: string): Promise<boolean> {
   try {

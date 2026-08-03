@@ -1,5 +1,5 @@
 import { coverUrl } from '../../api/media'
-import { deleteSong, separate } from '../../api/songs'
+import { deleteSong } from '../../api/songs'
 import type { Song } from '../../api/types'
 import { useSongEvents } from '../../hooks/useSongEvents'
 import { playSong } from '../../player/usePlaybackEngine'
@@ -34,15 +34,6 @@ export function SongRow({ song, onEdit }: Props) {
     if (!window.confirm(`Delete "${song.title}" and all its files? This cannot be undone.`)) return
     void deleteSong(song.id)
       .then(() => useLibraryStore.getState().refresh())
-      .catch((err) => toast(err instanceof Error ? err.message : String(err), 'error'))
-  }
-
-  const onGenerateInstrumental = () => {
-    void separate(song.id)
-      .then(() => {
-        toast('Generating instrumental…')
-        return useLibraryStore.getState().refresh()
-      })
       .catch((err) => toast(err instanceof Error ? err.message : String(err), 'error'))
   }
 
@@ -94,11 +85,6 @@ export function SongRow({ song, onEdit }: Props) {
         >
           + Queue
         </button>
-        {song.has_original && !song.has_instrumental && !processing ? (
-          <button title="Remove vocals to create a karaoke track" onClick={onGenerateInstrumental}>
-            Gen. instrumental
-          </button>
-        ) : null}
         <button onClick={() => openWizard(song.id)}>Files</button>
         <button onClick={() => onEdit(song)}>Edit</button>
         <button className="danger" onClick={onDelete}>

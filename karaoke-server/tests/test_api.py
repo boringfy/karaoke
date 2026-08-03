@@ -66,13 +66,13 @@ async def test_song_crud_and_upload_flow(client):
     )
     assert r.status_code == 201, r.text
     assert r.json()["enqueued_stages"] == [
-        "ingest", "lyrics", "align", "annotate", "render",
+        "ingest", "separate", "lyrics", "align", "annotate", "render",
     ]
 
     # Jobs visible and queued (worker is disabled in tests).
     r = await client.get(f"/api/v1/songs/{song_id}/jobs")
     stages = [j["stage"] for j in r.json()]
-    assert stages == ["ingest", "lyrics", "align", "annotate", "render"]
+    assert stages == ["ingest", "separate", "lyrics", "align", "annotate", "render"]
     assert all(j["state"] == "queued" for j in r.json())
 
     # Upload an instrumental: stored, no pipeline.
@@ -322,3 +322,41 @@ async def test_delete_song(client):
     assert r.status_code == 204
     r = await client.get(f"/api/v1/songs/{song_id}")
     assert r.status_code == 404
+
+
+async def test_retry_after_failure_is_not_poisoned(client):
+    """A failed chain must not make the song unretryable: enqueueing new work
+    supersedes old failed jobs, so the fresh jobs actually run instead of
+    being cascade-failed by history."""
+    from sqlalchemy import select, update
+
+    from karaoke_server.db import session as db_session
+    from karaoke_server.db.models import Job, JobState
+
+    song_id = await _create_song(client)
+    r = await client.post(
+        f"/api/v1/songs/{song_id}/audio",
+        files={"file": ("song.wav", make_wav(), "audio/wav")},
+        data={"kind": "original"},
+    )
+    assert r.status_code == 201
+
+    # Simulate the whole chain failing (e.g. lyrics not found).
+    factory = db_session.session_factory()
+    async with factory() as s:
+        await s.execute(
+            update(Job).where(Job.song_id == song_id)
+            .values(state=JobState.failed.value, error="boom")
+        )
+        await s.commit()
+
+    # Retry: reprocess must yield QUEUED jobs, and old failures superseded.
+    r = await client.post(f"/api/v1/songs/{song_id}/reprocess?from=lyrics")
+    assert r.status_code == 202
+    assert r.json()["enqueued_stages"] == ["lyrics", "align", "annotate", "render"]
+
+    async with factory() as s:
+        jobs = (await s.execute(select(Job).where(Job.song_id == song_id))).scalars().all()
+    states = [j.state for j in sorted(jobs, key=lambda j: j.order_index)]
+    assert states.count(JobState.queued.value) == 4, states  # fresh retry is live
+    assert JobState.failed.value not in states, states  # history superseded

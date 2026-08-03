@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { engine } from '../player/PlaybackEngine'
 import { usePlayerStore } from '../stores/playerStore'
-import { findLineIndex, findNextLineIndex, lyricTime, tokenFill } from './timing'
+import { findLineIndex, lyricTime, tokenFill } from './timing'
 import { TokenLine } from './TokenLine'
 
 /**
- * Karaoke overlay: current line with progressive per-token fill + upcoming line.
+ * Karaoke overlay: the current line only, with progressive per-token fill.
  * One rAF loop reads the engine clock; token fill is written straight to the
  * DOM via CSS vars so React only re-renders on line changes.
  */
@@ -13,7 +13,6 @@ export function SubtitleOverlay() {
   const subtitle = usePlayerStore((s) => s.subtitle)
   const status = usePlayerStore((s) => s.status)
   const [lineIdx, setLineIdx] = useState(-1)
-  const [nextIdx, setNextIdx] = useState(-1)
   const currentLineRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -27,7 +26,6 @@ export function SubtitleOverlay() {
       if (idx !== lastLine) {
         lastLine = idx
         setLineIdx(idx)
-        setNextIdx(findNextLineIndex(subtitle.lines, t))
       }
       if (idx >= 0 && currentLineRef.current) {
         const tokens = subtitle.lines[idx].tokens
@@ -45,13 +43,11 @@ export function SubtitleOverlay() {
   if (!subtitle || subtitle.lines.length === 0) return null
 
   const current = lineIdx >= 0 ? subtitle.lines[lineIdx] : null
-  const upcoming = nextIdx >= 0 ? subtitle.lines[nextIdx] : null
 
   return (
     <div className="subtitle-overlay">
-      {current ? <TokenLine key={`c${current.id}`} line={current} variant="current" ref={currentLineRef} /> : null}
-      {upcoming && upcoming !== current ? (
-        <TokenLine key={`n${upcoming.id}`} line={upcoming} variant="next" />
+      {current ? (
+        <TokenLine key={`c${current.id}`} line={current} variant="current" ref={currentLineRef} />
       ) : null}
     </div>
   )
