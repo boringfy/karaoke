@@ -48,6 +48,57 @@ class MediaCache {
     }
   }
 
+  // ---- offline metadata & small assets ----------------------------------
+
+  /// Persist a small text blob (library / subtitle JSON) for offline use.
+  Future<void> saveText(String key, String text) async {
+    try {
+      await _data(key).writeAsString(text);
+    } catch (_) {}
+  }
+
+  Future<String?> loadText(String key) async {
+    try {
+      final f = _data(key);
+      return await f.exists() ? await f.readAsString() : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// True when a complete, validated media file exists for [key] — i.e. this
+  /// item is playable with no network at all.
+  Future<bool> hasComplete(String key) async =>
+      await _data(key).exists() && await _meta(key).exists();
+
+  /// Small immutable asset (cover art). The key embeds a version (the song's
+  /// updated_at), so an existing file is trusted forever — no validation
+  /// probes. Older versions of the same asset are cleaned up on download.
+  /// [allowNetwork] false = offline hint: only return what's already here.
+  Future<File?> immutable(String key, String url, {bool allowNetwork = true}) async {
+    final f = _data(key);
+    if (await f.exists()) return f;
+    if (!allowNetwork) return null;
+    try {
+      final res =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 6));
+      if (res.statusCode != 200) return null;
+      final prefix = key.split('@').first;
+      await for (final e in root.list()) {
+        final name = e.path.split('/').last;
+        if (e is File && name.startsWith('$prefix@') && e.path != f.path) {
+          try {
+            await e.delete();
+          } catch (_) {}
+        }
+      }
+      await f.writeAsBytes(res.bodyBytes);
+      return f;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Fetch [url] into the cache NOW and return the file (used for audio:
   /// playing local files makes seeking instant and immune to network stalls;
   /// audio is small so the first-play download is fast on a LAN). Falls back

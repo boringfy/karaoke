@@ -15,6 +15,12 @@ highlight.
 - **Smooth karaoke lyrics**: current line only, per-word (EN) / per-character
   (CJK) wipe rendered on a `Ticker`-driven `CustomPainter` (60 fps), with
   furigana and a dark shadow so it stays readable over any background.
+- **Offline mode**: the library list, subtitles, covers, and media are all
+  cached on device (media validated against the server's ETag, so replaced
+  files re-download automatically). When the server is down or there's no
+  network, the app shows the cached library with an offline banner and plays
+  any song that has been played at least once while online; uncached songs
+  are greyed out.
 
 Not yet ported from desktop: upload/processing, play queue, lyric-sync editing,
 mini-player. (Songs are added from the desktop app; this client plays them.)

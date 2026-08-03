@@ -7,6 +7,7 @@ import 'package:video_player/video_player.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 import '../player/playback_engine.dart';
+import '../widgets/cached_cover.dart';
 import '../widgets/lyrics_view.dart';
 
 class PlayerScreen extends StatefulWidget {
@@ -139,8 +140,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
           );
         }
         if (widget.song.hasCover) {
-          return Image.network(widget.api.coverUrl(widget.song),
-              fit: BoxFit.cover, errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black));
+          return CachedCover(
+            api: widget.api,
+            song: widget.song,
+            fallback: const ColoredBox(color: Color(0xFF0F1115)),
+          );
         }
         return const ColoredBox(color: Color(0xFF0F1115));
       },
