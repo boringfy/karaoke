@@ -1,23 +1,23 @@
 import type { SubtitleDoc, SubtitleLine, SubtitleToken } from '../api/types'
 
+/** How early an upcoming line may be shown (unfilled) before it is sung. */
+export const PREVIEW_LEAD_S = 10
+
 /**
- * Find the index of the line covering time t (seconds, already offset-adjusted),
- * or -1 when between/before lines. Lines are assumed sorted by start.
+ * Index of the line to DISPLAY at time t (seconds, already offset-adjusted),
+ * or -1 when nothing should show. A line is displayed from
+ * max(previous line's end, its start - PREVIEW_LEAD_S) until its end: short
+ * gaps show the next line immediately, long breaks preview it 10 s ahead.
+ * The wipe still starts exactly at the line's real start (tokens before
+ * their start time render unfilled). Lines are assumed sorted by start.
  */
 export function findLineIndex(lines: SubtitleLine[], t: number): number {
-  let lo = 0
-  let hi = lines.length - 1
-  let candidate = -1
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1
-    if (lines[mid].start <= t) {
-      candidate = mid
-      lo = mid + 1
-    } else {
-      hi = mid - 1
-    }
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].end <= t) continue // already finished
+    const prevEnd = i > 0 ? lines[i - 1].end : Number.NEGATIVE_INFINITY
+    const displayFrom = Math.max(prevEnd, lines[i].start - PREVIEW_LEAD_S)
+    return t >= displayFrom ? i : -1
   }
-  if (candidate >= 0 && t <= lines[candidate].end) return candidate
   return -1
 }
 

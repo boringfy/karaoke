@@ -155,6 +155,48 @@ def extract_audio(src: Path, dest_dir: Path, stem: str = "original") -> Path:
     return dest
 
 
+COVER_MAX_SIDE = 1024
+
+
+def probe_image_size(path: Path) -> tuple[int, int] | None:
+    """(width, height) of an image, or None if unreadable."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=30, check=True,
+        ).stdout
+        streams = json.loads(out).get("streams", [])
+        if not streams:
+            return None
+        w, h = streams[0].get("width"), streams[0].get("height")
+        return (int(w), int(h)) if w and h else None
+    except (subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def scale_cover(src: Path, dest: Path) -> None:
+    """Normalize uploaded cover art: cap the long side at COVER_MAX_SIDE and
+    re-encode as JPEG. Uploads are often camera photos or full-res scans of
+    several MB; covers render at ~48px in lists and as a blurred background,
+    so 1024px is plenty and keeps the library snappy."""
+    # Fit inside a square box, keeping aspect ratio. Callers only invoke this
+    # for images larger than the box, so no upscaling can occur.
+    scale = f"scale={COVER_MAX_SIDE}:{COVER_MAX_SIDE}:force_original_aspect_ratio=decrease"
+    tmp = dest.with_suffix(dest.suffix + ".part.jpg")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", str(src),
+             "-frames:v", "1", "-vf", scale, "-qscale:v", "3", str(tmp)],
+            capture_output=True, text=True, timeout=120, check=True,
+        )
+    except subprocess.SubprocessError as e:
+        tmp.unlink(missing_ok=True)
+        stderr = getattr(e, "stderr", "") or str(e)
+        raise FfmpegError(stderr.strip()[-500:]) from e
+    tmp.replace(dest)
+
+
 def to_wav_mono16k(src: Path, dest: Path) -> None:
     """Decode to 16 kHz mono WAV (what Whisper/VAD consume)."""
     try:

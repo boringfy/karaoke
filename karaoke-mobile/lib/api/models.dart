@@ -117,19 +117,22 @@ class SubtitleDoc {
             .toList(),
       );
 
-  /// Index of the line covering lyric-time [t], or -1 in a gap/rest.
+  /// How early an upcoming line may be shown (unfilled) before it is sung.
+  static const previewLeadS = 10.0;
+
+  /// Index of the line to DISPLAY at lyric-time [t], or -1 for nothing.
+  /// A line is displayed from max(previous line's end, start - 10s) until its
+  /// end: short gaps show the next line immediately, long breaks preview it
+  /// 10 s ahead. The wipe still starts at the line's real start (tokens
+  /// before their start render unfilled).
   int lineIndexAt(double t) {
-    var lo = 0, hi = lines.length - 1, cand = -1;
-    while (lo <= hi) {
-      final mid = (lo + hi) >> 1;
-      if (lines[mid].start <= t) {
-        cand = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].end <= t) continue; // already finished
+      final prevEnd = i > 0 ? lines[i - 1].end : double.negativeInfinity;
+      final displayFrom =
+          prevEnd > lines[i].start - previewLeadS ? prevEnd : lines[i].start - previewLeadS;
+      return t >= displayFrom ? i : -1;
     }
-    if (cand >= 0 && t <= lines[cand].end) return cand;
     return -1;
   }
 }

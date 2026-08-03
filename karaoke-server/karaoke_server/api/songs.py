@@ -299,6 +299,19 @@ async def upload_cover(
         )
     dest = storage.song_dir(song_id)
     path, sha = await storage.save_upload(dest, "cover", file.filename or "", file)
+    # Auto-scale: cap the long side at 1024px and re-encode as JPEG so
+    # multi-MB photos/scans don't weigh down the library. Unreadable files
+    # (or already-small ones on a failed probe) are kept as uploaded.
+    size = await asyncio.to_thread(ffmpeg.probe_image_size, path)
+    if size and max(size) > ffmpeg.COVER_MAX_SIDE:
+        scaled = dest / "cover.jpg"
+        try:
+            await asyncio.to_thread(ffmpeg.scale_cover, path, scaled)
+            if scaled != path:
+                path.unlink(missing_ok=True)
+            path = scaled
+        except ffmpeg.FfmpegError:
+            log.exception("cover scaling failed for song %s; keeping original", song_id)
     song.cover_path = str(path)
     await session.commit()
     return UploadResult(song_id=song_id, kind="cover", path_name=path.name, sha256=sha)

@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react'
-import { getSong, separate, updateSong, uploadAudio } from '../../api/songs'
+import { getSong, separate, updateSong, uploadAudio, uploadCover } from '../../api/songs'
 import type { Language, Song } from '../../api/types'
 import { useLibraryStore } from '../../stores/libraryStore'
 import { useUiStore } from '../../stores/uiStore'
 
 const AUDIO_ACCEPT = '.mp3,.flac,.wav,.m4a,.aac,.ogg,.opus,.wma,.aiff'
+const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp,.gif'
 
 interface Props {
   song: Song
@@ -21,6 +22,7 @@ export function EditSongDialog({ song, onClose }: Props) {
   const [busy, setBusy] = useState<string | null>(null)
   const origRef = useRef<HTMLInputElement>(null)
   const instRef = useRef<HTMLInputElement>(null)
+  const coverRef = useRef<HTMLInputElement>(null)
   const toast = useUiStore((s) => s.toast)
 
   const save = async () => {
@@ -58,6 +60,18 @@ export function EditSongDialog({ song, onClose }: Props) {
           ? 'Audio replaced — reprocessing lyrics & instrumental…'
           : 'Instrumental replaced',
       )
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const replaceCover = async (file: File) => {
+    setBusy('Uploading cover…')
+    try {
+      await uploadCover(song.id, file)
+      await refresh('Cover updated (auto-scaled on the server)')
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err), 'error')
     } finally {
@@ -134,8 +148,25 @@ export function EditSongDialog({ song, onClose }: Props) {
               Regenerate
             </button>
           </div>
+          <div className="edit-media-row">
+            <span className="edit-media-name">Cover {cur.has_cover ? '✓' : '—'}</span>
+            <button disabled={!!busy} onClick={() => coverRef.current?.click()}>
+              Replace cover…
+            </button>
+            <input
+              ref={coverRef}
+              type="file"
+              accept={IMAGE_ACCEPT}
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) void replaceCover(file)
+                e.target.value = ''
+              }}
+            />
+          </div>
           <span className="hint">
-            {busy ?? 'Replacing the original re-runs lyric processing. Regenerate re-removes vocals.'}
+            {busy ?? 'Replacing the original re-runs lyric processing. Covers are auto-scaled.'}
           </span>
         </div>
 
