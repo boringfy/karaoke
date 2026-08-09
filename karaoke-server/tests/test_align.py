@@ -351,3 +351,98 @@ def test_producer_credit_lines_are_filtered(monkeypatch):
     monkeypatch.setattr(wa, "_transcribe_units", lambda *a: units)
     aligned, _ = wa._align_by_transcription(AUDIO, lines, "zh", [2.2, 26.8])
     assert [ln.text for ln in aligned] == [lines[1]]
+
+
+# --------------------------------------------- VAD-aware gap interpolation
+
+def test_place_in_speech_skips_instrumental_break():
+    """Un-anchored units must land on the sung part of the window, not be
+    smeared across an instrumental break (words on screen during silence)."""
+    # Window 100-160s; the singer is only active 140-160s.
+    placed = wa._place_in_speech(100.0, 160.0, 4, ((140.0, 160.0),))
+    assert all(s >= 139.9 for s, _ in placed), placed
+    assert placed[0][0] < placed[-1][0]  # still in order
+    assert placed[-1][1] <= 160.01
+
+
+def test_place_in_speech_spans_two_stretches():
+    """With singing on both sides of a break, units distribute over the sung
+    time and skip the middle."""
+    placed = wa._place_in_speech(0.0, 100.0, 4, ((0.0, 10.0), (90.0, 100.0)))
+    inside_break = [s for s, _ in placed if 12.0 < s < 88.0]
+    assert not inside_break, placed
+
+
+def test_place_in_speech_falls_back_without_vad():
+    """No VAD data (or silent window): keep the previous even spread."""
+    placed = wa._place_in_speech(0.0, 10.0, 2, ())
+    assert len(placed) == 2
+    assert 0.0 <= placed[0][0] < placed[1][0] <= 10.0
+
+
+def test_unheard_line_is_marked_interpolated(monkeypatch):
+    """A line no unit of which anchored must not claim 'aligned' trust."""
+    lines = ["きこえる声", "とどかない言葉"]
+    units = _spread(_norm_chars(lines[0]), 10.0, 15.0)  # only line 0 is heard
+    monkeypatch.setattr(wa, "_transcribe_units", lambda *a: units)
+    monkeypatch.setattr(wa, "_speech_regions", lambda p: ((10.0, 15.0),))
+    aligned, _ = wa._align_by_transcription(AUDIO, lines, "ja")
+    by_text = {ln.text: ln for ln in aligned}
+    assert by_text[lines[0]].alignment == "aligned"
+    if lines[1] in by_text:
+        assert by_text[lines[1]].alignment == "interpolated"
+
+
+def test_gap_recovery_measures_heard_coverage_not_guesses(monkeypatch):
+    """Interpolated guesses must not mask the hole they span: gap recovery
+    re-decides those windows on evidence and supersedes them."""
+    lines = ["きこえるこえ", "とどかないことば", "むねのおくで", "ひびいている"]
+    # Main pass hears only the first and last line (a long break between).
+    main = (
+        _spread(_norm_chars(lines[0]), 5.0, 10.0)
+        + _spread(_norm_chars(lines[3]), 60.0, 65.0)
+    )
+    monkeypatch.setattr(wa, "_transcribe_units", lambda *a: main)
+    monkeypatch.setattr(wa, "_speech_regions", lambda p: ((5.0, 10.0), (60.0, 65.0)))
+    monkeypatch.setattr(wa.ffmpeg, "probe_duration", lambda p: 70.0)
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+    # Re-transcribing the gap DOES hear the two middle lines, late in it.
+    def window(audio, lang, cjk, s, e):
+        return (
+            _spread(_norm_chars(lines[1]), 45.0, 50.0)
+            + _spread(_norm_chars(lines[2]), 50.0, 55.0)
+        )
+    monkeypatch.setattr(wa, "_transcribe_window", window)
+
+    aligned, _ = wa._align_by_transcription(AUDIO, lines, "ja")
+    by_text = {ln.text: ln for ln in aligned}
+    # The middle lines are placed where they were actually sung, not smeared
+    # across the break starting right after line 0.
+    assert by_text[lines[1]].start > 40.0, [(x.text, x.start) for x in aligned]
+    assert by_text[lines[2]].start > 40.0
+    # And no line is lost.
+    assert set(by_text) == set(lines)
+
+
+def test_transfer_timing_ignores_filler_units():
+    """A run of consecutive lines must anchor precisely even when the window
+    transcript is padded with filler the lyrics don't contain."""
+    texts = ["きこえるこえ", "とどかないことば"]
+    units = (
+        _spread(["あ"] * 8, 100.0, 120.0)                      # filler ("aaah")
+        + _spread(_norm_chars(texts[0]), 168.0, 173.0)
+        + _spread(_norm_chars(texts[1]), 173.0, 179.0)
+    )
+    out = wa._transfer_timing(texts, units, True)
+    assert [ln.text for ln in out] == texts
+    assert abs(out[0].start - 168.0) < 0.3, out[0].start
+    assert abs(out[1].end - 179.0) < 0.3
+    assert all(ln.alignment == "aligned" for ln in out)
+
+
+def test_transfer_timing_skips_unheard_lines():
+    """Lines the window transcript doesn't contain are left for the caller."""
+    texts = ["きこえるこえ", "ここにはないことば"]
+    units = _spread(_norm_chars(texts[0]), 10.0, 15.0)
+    out = wa._transfer_timing(texts, units, True)
+    assert [ln.text for ln in out] == [texts[0]]

@@ -422,6 +422,64 @@ def _transcribe_units(
     return units
 
 
+@lru_cache(maxsize=4)
+def _speech_regions(audio_path: Path) -> tuple[tuple[float, float], ...]:
+    """VAD-detected vocal stretches, as absolute (start, end) second pairs.
+    Empty when the audio can't be read (callers then fall back to plain
+    interpolation)."""
+    try:
+        from faster_whisper.audio import decode_audio
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+        sr = 16000
+        audio = decode_audio(str(audio_path), sampling_rate=sr)
+        return tuple(
+            (t["start"] / sr, t["end"] / sr)
+            for t in get_speech_timestamps(audio, VadOptions())
+        )
+    except Exception:  # noqa: BLE001 - VAD is an optimization, never fatal
+        log.exception("VAD failed for %s; interpolating without it", audio_path)
+        return ()
+
+
+def _place_in_speech(
+    lo: float, hi: float, n: int, speech: tuple[tuple[float, float], ...]
+) -> list[tuple[float, float]]:
+    """Lay out `n` un-anchored units in (lo, hi), keeping them on the parts
+    where the VAD hears singing.
+
+    Without this, a run of unmatched lines gets smeared evenly across the
+    whole window — so a bridge that follows a 20 s instrumental break appears
+    on screen while the track is still instrumental. Units are distributed
+    over the *speech* portion of the window instead; the silence between
+    those stretches is simply skipped."""
+    if n <= 0:
+        return []
+    if hi <= lo:
+        return [(lo, lo)] * n
+    spans = [(max(s, lo), min(e, hi)) for s, e in speech if e > lo and s < hi]
+    spans = [(s, e) for s, e in spans if e > s]
+    total = sum(e - s for s, e in spans)
+    if not spans or total <= 0.05:
+        # No vocals detected in the window: fall back to an even spread, but
+        # cap it to a plausible singing pace so the run doesn't crawl.
+        step = (hi - lo) / (n + 1)
+        return [(lo + step * (k + 0.5), lo + step * (k + 1)) for k in range(n)]
+
+    def at(fraction: float) -> float:
+        """Map [0,1] over cumulative speech time back to the timeline."""
+        target = fraction * total
+        acc = 0.0
+        for s, e in spans:
+            d = e - s
+            if acc + d >= target:
+                return s + (target - acc)
+            acc += d
+        return spans[-1][1]
+
+    return [(at(k / n), at((k + 1) / n)) for k in range(n)]
+
+
 def _align_by_transcription(
     audio_path: Path,
     lines: list[str],
@@ -525,7 +583,11 @@ def _align_by_transcription(
     used_j = {j for j, li in jmap.items() if li in keep}
     dl = [d for d in dl if d[0] in keep]
 
-    # Interpolate un-anchored runs evenly between their bounding anchors.
+    # Fill in un-anchored runs (units the transcript never matched). Spreading
+    # them evenly across the whole gap would drag lyrics through instrumental
+    # breaks — the classic "words on screen while nobody sings" bug — so they
+    # are placed only where the VAD hears vocals.
+    speech = _speech_regions(audio_path)
     i = 0
     while i < len(dl):
         if dl[i][3] is None:
@@ -534,10 +596,10 @@ def _align_by_transcription(
                 j += 1
             prev_end = dl[i - 1][4] if i > 0 and dl[i - 1][4] is not None else 0.0
             next_start = dl[j][3] if j < len(dl) else prev_end + 0.5 * (j - i)
-            step = (next_start - prev_end) / (j - i + 1)
-            for k in range(i, j):
-                dl[k][3] = prev_end + step * (k - i + 0.5)
-                dl[k][4] = prev_end + step * (k - i + 1)
+            for k, (s, e) in enumerate(
+                _place_in_speech(prev_end, next_start, j - i, speech)
+            ):
+                dl[i + k][3], dl[i + k][4] = s, e
             i = j
         else:
             i += 1
@@ -562,7 +624,10 @@ def _align_by_transcription(
                 end=toks[-1].end,
                 tokens=toks,
                 score=round(sum(ps) / len(ps), 4) if ps else None,
-                alignment="aligned",
+                # Nothing in this line was actually heard — its timing came
+                # from surrounding anchors, so report the weaker trust level
+                # instead of passing guesswork off as heard timing.
+                alignment="aligned" if ps else "interpolated",
             )
         )
 
@@ -659,7 +724,15 @@ def _recover_gaps(
     """
     if not aligned or not Path(audio_path).exists():
         return
-    spans = sorted((ln.start, ln.end) for ln in aligned)
+    # Measure coverage by what was actually HEARD. Interpolated lines are
+    # guesses about exactly the stretches this pass needs to investigate — if
+    # they counted as coverage they would hide the hole they were invented to
+    # span (a hallucinated credit line over an instrumental break makes the
+    # real lyrics unanchorable, and the guesses then mask the break).
+    heard = [ln for ln in aligned if ln.alignment == "aligned"]
+    if not heard:
+        return
+    spans = sorted((ln.start, ln.end) for ln in heard)
     gaps: list[tuple[float, float]] = []
     if spans[0][0] > 12.0:
         gaps.append((0.0, spans[0][0] + 1.0))
@@ -678,8 +751,94 @@ def _recover_gaps(
         except Exception:  # noqa: BLE001 - recovery is strictly best-effort
             log.exception("gap re-transcription failed for %.1f-%.1fs", gs, ge)
             continue
-        if units:
-            _recover_reordered(aligned, lyr, units, set(), cjk)
+        if not units:
+            continue
+        # Guesses inside this window are about to be re-decided on evidence:
+        # set them aside so their lines can be timed from the re-transcription.
+        stale = sorted(
+            (
+                ln
+                for ln in aligned
+                if ln.alignment == "interpolated"
+                and ln.start >= gs - 1.0
+                and ln.end <= ge + 1.0
+            ),
+            key=lambda ln: ln.start,
+        )
+        for ln in stale:
+            aligned.remove(ln)
+        placed: set[str] = set()
+        if stale:
+            # These lines are consecutive in the lyrics, so a plain monotonic
+            # transfer against the window transcript is both precise and
+            # order-safe — the fuzzy whole-segment matcher below is meant for
+            # *reordered* material and gets lost among filler ("aaah") units.
+            for ln in _transfer_timing([s.text for s in stale], units, cjk):
+                aligned.append(ln)
+                placed.add(ln.text)
+        before = len(aligned)
+        _recover_reordered(aligned, lyr, units, set(), cjk)
+        placed.update(ln.text for ln in aligned[before:])
+        # Keep any line the evidence couldn't place, rather than losing lyrics.
+        aligned.extend(ln for ln in stale if ln.text not in placed)
+
+
+def _transfer_timing(
+    texts: list[str], units: list[tuple[str, float, float, float]], cjk: bool
+) -> list[AlignedLine]:
+    """Time a run of consecutive lyric lines against a transcript, monotonically.
+
+    The main pass's anchoring restricted to a subset: lines keep their order,
+    so a plain LCS transfer is precise even when the transcript carries filler
+    the lyrics don't have. Only lines that genuinely anchor are returned —
+    callers keep their previous guess for the rest."""
+    rows = _lyric_units(texts, cjk)
+    midx = [i for i, r in enumerate(rows) if r[2]]
+    if not rows or not midx or not units:
+        return []
+    sm = difflib.SequenceMatcher(
+        a=[rows[i][2] for i in midx], b=[u[0] for u in units], autojunk=False
+    )
+    for tag, i1, i2, j1, _j2 in sm.get_opcodes():
+        if tag != "equal":
+            continue
+        for k in range(i2 - i1):
+            i = midx[i1 + k]
+            rows[i][3], rows[i][4], rows[i][5] = units[j1 + k][1:4]
+
+    out: list[AlignedLine] = []
+    for li, text in enumerate(texts):
+        mine = [r for r in rows if r[0] == li]
+        matchable = [r for r in mine if r[2]]
+        anchored = [r for r in mine if r[3] is not None]
+        if not matchable or len(anchored) / len(matchable) < 0.4:
+            continue  # not convincingly heard here; leave it to the caller
+        lo, hi = anchored[0][3], anchored[-1][4]
+        span = max(hi - lo, 0.2)
+        step = span / len(mine)
+        toks: list[AlignedToken] = []
+        cursor = lo
+        for k, r in enumerate(mine):
+            s = r[3] if r[3] is not None else lo + step * k
+            e = r[4] if r[4] is not None else s + step
+            s = max(float(s), cursor)
+            e = max(float(e), s)
+            toks.append(AlignedToken(r[1], round(s, 3), round(e, 3), r[5]))
+            cursor = s
+        if cjk:
+            toks = _explode_cjk(toks)
+        ps = [t.p for t in toks if t.p is not None]
+        out.append(
+            AlignedLine(
+                text=text,
+                start=toks[0].start,
+                end=toks[-1].end,
+                tokens=toks,
+                score=round(sum(ps) / len(ps), 4) if ps else None,
+                alignment="aligned",
+            )
+        )
+    return out
 
 
 def _transcribe_window(
