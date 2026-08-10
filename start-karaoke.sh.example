@@ -1,0 +1,29 @@
+#!/bin/bash
+# Starts karaoke-server + the karaoke-player dev UI together.
+#
+# Copy to start-karaoke.sh and adjust if needed. start-karaoke.sh is gitignored
+# so your local edits stay out of the repo.
+#
+# Server configuration does NOT belong in this file — put it in
+# karaoke-server/.env (see karaoke-server/.env.example).
+set -e
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Homebrew on PATH so deno is visible (used by yt-dlp; harmless if absent).
+[ -d /home/linuxbrew/.linuxbrew/bin ] && export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+
+# --- karaoke-server -------------------------------------------------------
+# Reads karaoke-server/.env from this working directory.
+cd "$ROOT/karaoke-server"
+source .venv/bin/activate
+karaoke-server > /tmp/karaoke-server.log 2>&1 &
+SERVER_PID=$!
+
+# --- karaoke-player (Vite dev server) -------------------------------------
+cd "$ROOT/karaoke-player"
+npm run dev > /tmp/vite-dev.log 2>&1 &
+UI_PID=$!
+
+trap 'kill $SERVER_PID $UI_PID 2>/dev/null; exit' SIGINT SIGTERM
+wait

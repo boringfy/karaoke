@@ -8,3 +8,12 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Data directory (songs, database, models)
+/data/
+
+# Local launcher — machine-specific paths. Use start-karaoke.sh.example.
+/start-karaoke.sh
+
+# Local env files (server config lives in karaoke-server/.env)
+.env
