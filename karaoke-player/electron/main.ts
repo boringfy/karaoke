@@ -80,7 +80,8 @@ async function createWindow() {
   })
 
   await win.loadURL(url)
-  if (process.env.VITE_DEV_SERVER_URL) {
+  // DevTools stay closed on start; set KARAOKE_DEVTOOLS=1 to open them in dev.
+  if (process.env.VITE_DEV_SERVER_URL && process.env.KARAOKE_DEVTOOLS === '1') {
     win.webContents.openDevTools({ mode: 'detach' })
   }
 }

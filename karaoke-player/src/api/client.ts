@@ -1,4 +1,11 @@
-export const SERVER_BASE = 'http://127.0.0.1:8787'
+// Backend location. Defaults to a karaoke-server on this machine; point the app
+// at a server on the LAN with VITE_KARAOKE_SERVER (e.g. in .env.local):
+//   VITE_KARAOKE_SERVER=http://192.168.0.109:8787
+// That host's CORS allowlist must include this page's origin (localhost:5173).
+export const SERVER_BASE = (import.meta.env.VITE_KARAOKE_SERVER ?? 'http://127.0.0.1:8787').replace(
+  /\/+$/,
+  '',
+)
 export const API_BASE = `${SERVER_BASE}/api/v1`
 
 export class ApiError extends Error {

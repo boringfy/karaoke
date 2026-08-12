@@ -9,6 +9,9 @@ release/
 # TypeScript incremental build info
 *.tsbuildinfo
 
+# Local machine config (e.g. VITE_KARAOKE_SERVER pointing at a LAN backend)
+.env.local
+
 # Logs & OS cruft
 *.log
 .DS_Store

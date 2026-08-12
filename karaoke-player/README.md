@@ -36,11 +36,23 @@ Desktop karaoke player (Electron + React + TypeScript) for the local
 - `karaoke-server` running on `127.0.0.1:8787` (start it first; the app shows a
   waiting screen until it is reachable)
 
+To use a backend on another machine, set `VITE_KARAOKE_SERVER` (read at
+build/dev-server start, e.g. in `.env.local`):
+
+```bash
+VITE_KARAOKE_SERVER=http://192.168.0.109:8787
+```
+
+That server must allow this app's origin, i.e. start it with
+`KARAOKE_CORS_ORIGINS=http://localhost:5173,http://localhost:3000` (the
+default) or a list including them.
+
 ## Development
 
 ```bash
 npm install
 npm run dev        # Vite on http://localhost:5173 + Electron with hot reload
+KARAOKE_DEVTOOLS=1 npm run dev   # same, but opens DevTools on start
 ```
 
 **Port matters:** karaoke-server only allows CORS from `localhost:5173` and
