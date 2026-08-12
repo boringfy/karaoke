@@ -6,13 +6,40 @@ import { usePlayerStore } from '../stores/playerStore'
 import { useQueueStore } from '../stores/queueStore'
 import { useUiStore } from '../stores/uiStore'
 
+const VOLUME_KEY = 'volume'
+
+/** Volume persists across restarts, matching how the queue is stored:
+ * Electron's JSON store when available, localStorage in a browser. */
+async function restoreVolume(): Promise<void> {
+  try {
+    const raw = window.karaoke
+      ? await window.karaoke.store.get(VOLUME_KEY)
+      : localStorage.getItem(VOLUME_KEY)
+    const v = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : NaN
+    if (Number.isFinite(v)) {
+      engine.setVolume(v)
+      usePlayerStore.setState({ volume: engine.getVolume() })
+    }
+  } catch {
+    // keep the default of full volume
+  }
+}
+
+function saveVolume(volume: number): void {
+  if (window.karaoke) void window.karaoke.store.set(VOLUME_KEY, volume)
+  else localStorage.setItem(VOLUME_KEY, String(volume))
+}
+
 /** Load a song into the engine, fetch its subtitle, and start playback. */
 export async function playSong(song: Song): Promise<void> {
   usePlayerStore.setState({ song, status: 'loading', subtitle: null, error: null, coarseTime: 0 })
   useUiStore.getState().setView('player')
 
   let subtitlePromise: Promise<void> = Promise.resolve()
-  if (song.has_subtitle) {
+  // A song whose MV carries its own lyrics keeps subtitle null, which also
+  // silences the mini-player's lyric line. Checked even when has_subtitle is
+  // true: the flag may have been set after the song was already aligned.
+  if (song.has_subtitle && !song.embedded_lyrics) {
     subtitlePromise = getSubtitle(song.id)
       .then((subtitle) => usePlayerStore.setState({ subtitle }))
       .catch(() => undefined)
@@ -72,8 +99,13 @@ export function usePlaybackEngineBinding() {
       engine.on('track', (track) => usePlayerStore.setState({ track })),
       engine.on('durationchange', (duration) => usePlayerStore.setState({ duration })),
       engine.on('error', (error) => usePlayerStore.setState({ error })),
+      engine.on('volume', (volume) => {
+        usePlayerStore.setState({ volume })
+        void saveVolume(volume)
+      }),
       engine.on('ended', () => void playNextInQueue()),
     ]
+    void restoreVolume()
     const coarseTimer = setInterval(() => {
       usePlayerStore.setState({ coarseTime: engine.getTime() })
     }, 250)

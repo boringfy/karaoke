@@ -18,6 +18,7 @@ export function EditSongDialog({ song, onClose }: Props) {
   const [artist, setArtist] = useState(song.artist ?? '')
   const [album, setAlbum] = useState(song.album ?? '')
   const [language, setLanguage] = useState<Language>(song.language)
+  const [embeddedLyrics, setEmbeddedLyrics] = useState(song.embedded_lyrics)
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const origRef = useRef<HTMLInputElement>(null)
@@ -33,6 +34,7 @@ export function EditSongDialog({ song, onClose }: Props) {
         artist: artist.trim() || undefined,
         album: album.trim() || undefined,
         language,
+        embedded_lyrics: embeddedLyrics,
       })
       useLibraryStore.getState().patchSong(updated)
       onClose()
@@ -123,6 +125,20 @@ export function EditSongDialog({ song, onClose }: Props) {
             <option value="zh">Chinese</option>
             <option value="ja">Japanese</option>
           </select>
+        </label>
+        <label className="edit-check">
+          <input
+            type="checkbox"
+            checked={embeddedLyrics}
+            onChange={(e) => setEmbeddedLyrics(e.target.checked)}
+          />
+          <span>
+            Video already has lyrics
+            <small>
+              Skips lyric fetch and alignment, and hides the subtitle overlay so the words burned
+              into the MV are not doubled.
+            </small>
+          </span>
         </label>
 
         <div className="edit-media">

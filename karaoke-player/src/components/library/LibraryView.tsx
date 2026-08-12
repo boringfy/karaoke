@@ -3,6 +3,7 @@ import type { Song } from '../../api/types'
 import { PAGE_SIZE, useLibraryStore } from '../../stores/libraryStore'
 import { useUiStore } from '../../stores/uiStore'
 import { EditSongDialog } from './EditSongDialog'
+import { RemoteControlCard } from './RemoteControlCard'
 import { SearchBar } from './SearchBar'
 import { SongRow } from './SongRow'
 
@@ -23,6 +24,7 @@ export function LibraryView() {
         <h1>Karaoke Library</h1>
         <div className="library-header-actions">
           <SearchBar />
+          <RemoteControlCard />
           <button className="primary" onClick={() => openWizard('new')}>
             + Add song
           </button>

@@ -10,6 +10,7 @@ export interface EngineEvents {
   error: (message: string) => void
   loaded: (song: Song) => void
   durationchange: (duration: number) => void
+  volume: (volume: number) => void
 }
 
 const DRIFT_INTERVAL_MS = 500
@@ -36,6 +37,10 @@ export class PlaybackEngine {
   private ctx: AudioContext | null = null
   private gainOriginal: GainNode | null = null
   private gainInstrumental: GainNode | null = null
+  /** Master gain sits after the two track gains, so changing volume never
+   * disturbs the original<->instrumental crossfade. */
+  private gainMaster: GainNode | null = null
+  private volume = 1
 
   private song: Song | null = null
   private status: EngineStatus = 'idle'
@@ -50,6 +55,7 @@ export class PlaybackEngine {
     error: new Set(),
     loaded: new Set(),
     durationchange: new Set(),
+    volume: new Set(),
   }
 
   constructor() {
@@ -128,6 +134,31 @@ export class PlaybackEngine {
 
   canToggle(): boolean {
     return !!this.song?.has_original && !!this.song?.has_instrumental
+  }
+
+  getVolume(): number {
+    return this.volume
+  }
+
+  /** `v` is 0..1. Applied to the master gain, so it is independent of which
+   * track is active and survives a crossfade. */
+  setVolume(v: number): void {
+    const next = Math.min(1, Math.max(0, v))
+    if (next === this.volume) return
+    this.volume = next
+    if (this.ctx && this.gainMaster) {
+      // Short ramp instead of a step: an abrupt gain change clicks.
+      this.gainMaster.gain.setTargetAtTime(next, this.ctx.currentTime, 0.015)
+    } else {
+      // Web Audio unavailable: drive the elements directly.
+      this.original.volume = next
+      this.instrumental.volume = next
+    }
+    this.emit('volume', next)
+  }
+
+  nudgeVolume(delta: number): void {
+    this.setVolume(this.volume + delta)
   }
 
   private setStatus(status: EngineStatus) {
@@ -233,10 +264,13 @@ export class PlaybackEngine {
       this.ctx = new AudioContext()
       this.gainOriginal = this.ctx.createGain()
       this.gainInstrumental = this.ctx.createGain()
+      this.gainMaster = this.ctx.createGain()
       this.ctx.createMediaElementSource(this.original).connect(this.gainOriginal)
       this.ctx.createMediaElementSource(this.instrumental).connect(this.gainInstrumental)
-      this.gainOriginal.connect(this.ctx.destination)
-      this.gainInstrumental.connect(this.ctx.destination)
+      this.gainOriginal.connect(this.gainMaster)
+      this.gainInstrumental.connect(this.gainMaster)
+      this.gainMaster.connect(this.ctx.destination)
+      this.gainMaster.gain.value = this.volume
       this.applyGains(true)
     } catch {
       // Web Audio unavailable — fall back to muting elements directly.

@@ -6,12 +6,14 @@ import { Toasts } from './components/common/Toasts'
 import { UploadWizard } from './components/upload/UploadWizard'
 import { useHealth } from './hooks/useHealth'
 import { usePlaybackEngineBinding } from './player/usePlaybackEngine'
+import { useRemoteControl } from './remote/useRemoteControl'
 import { useServerStore } from './stores/serverStore'
 import { useUiStore } from './stores/uiStore'
 
 export default function App() {
   useHealth()
   usePlaybackEngineBinding()
+  useRemoteControl()
   const reachable = useServerStore((s) => s.reachable)
   const view = useUiStore((s) => s.view)
   const wizardSongId = useUiStore((s) => s.wizardSongId)

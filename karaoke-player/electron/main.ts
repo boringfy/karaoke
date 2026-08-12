@@ -1,6 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { startStaticServer } from './static-server'
+import { startRemoteServer } from './remote-server'
+import type { RemoteServerHandle, RemoteState } from './remote-server'
 import { JsonStore } from './store'
 
 const ALLOWED_PORTS = [5173, 3000] // must match karaoke-server CORS allowlist
@@ -80,9 +82,56 @@ async function createWindow() {
   })
 
   await win.loadURL(url)
-  // DevTools stay closed on start; set KARAOKE_DEVTOOLS=1 to open them in dev.
+  // DevTools stay closed by default even in dev — this is a fullscreen media
+  // app and a detached inspector steals focus on every launch. Open it on
+  // demand with F12, or set KARAOKE_DEVTOOLS=1.
   if (process.env.VITE_DEV_SERVER_URL && process.env.KARAOKE_DEVTOOLS === '1') {
     win.webContents.openDevTools({ mode: 'detach' })
+  }
+  win.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') {
+      win?.webContents.toggleDevTools()
+    }
+  })
+}
+
+/** Latest state published by the renderer; served to remotes that connect
+ * before the renderer has pushed an update. */
+let remoteState: RemoteState = { playing: null, status: 'idle', queue: [], currentIndex: -1 }
+let remote: RemoteServerHandle | null = null
+/** karaoke-server base URL, published by the renderer so it cannot drift from
+ * the constant the renderer itself uses. */
+let serverBase = 'http://127.0.0.1:8787'
+
+async function startRemote(store: JsonStore): Promise<void> {
+  if (remote) return
+  try {
+    remote = await startRemoteServer(
+      {
+        getState: () => remoteState,
+        command: (cmd) => win?.webContents.send('remote:command', cmd),
+        search: async (q) => {
+          const url = `${serverBase}/api/v1/songs?limit=25${q ? `&q=${encodeURIComponent(q)}` : ''}`
+          const r = await fetch(url)
+          if (!r.ok) throw new Error(`search failed: ${r.status}`)
+          return await r.json()
+        },
+        cover: async (songId) => {
+          // Reject anything that isn't a plain id before building a URL.
+          if (!/^[a-zA-Z0-9_-]{1,64}$/.test(songId)) return null
+          const r = await fetch(`${serverBase}/api/v1/songs/${songId}/cover`)
+          if (!r.ok) return null
+          return {
+            body: Buffer.from(await r.arrayBuffer()),
+            type: r.headers.get('content-type') ?? 'image/jpeg',
+          }
+        },
+      },
+      (await store.get('remoteToken')) as string | undefined,
+    )
+    void store.set('remoteToken', remote.token)
+  } catch (err) {
+    console.error('remote control server failed to start:', err)
   }
 }
 
@@ -90,8 +139,20 @@ app.whenReady().then(() => {
   const store = new JsonStore()
   ipcMain.handle('store:get', (_e, key: string) => store.get(key))
   ipcMain.handle('store:set', (_e, key: string, value: unknown) => store.set(key, value))
+  ipcMain.handle('remote:publish', (_e, state: RemoteState, base?: string) => {
+    remoteState = state
+    if (base) serverBase = base
+    remote?.broadcast(state)
+  })
+  ipcMain.handle('remote:info', () =>
+    remote ? { urls: remote.urls, token: remote.token, port: remote.port } : null,
+  )
+  void startRemote(store)
   ipcMain.handle('window:toggle-fullscreen', () => {
     if (win) win.setFullScreen(!win.isFullScreen())
+  })
+  ipcMain.handle('window:exit-fullscreen', () => {
+    if (win?.isFullScreen()) win.setFullScreen(false)
   })
 
   void createWindow()

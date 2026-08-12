@@ -1,3 +1,4 @@
+import { toggleFullscreen } from '../../player/fullscreen'
 import { nudgeLyricOffset } from '../../player/lyricSync'
 import { engine } from '../../player/PlaybackEngine'
 import { playNextInQueue } from '../../player/usePlaybackEngine'
@@ -10,6 +11,7 @@ export function TransportBar() {
   const status = usePlayerStore((s) => s.status)
   const track = usePlayerStore((s) => s.track)
   const offsetMs = usePlayerStore((s) => s.subtitle?.offset_ms ?? null)
+  const volume = usePlayerStore((s) => s.volume)
   const queueLen = useQueueStore((s) => s.queue.length)
   const queueIdx = useQueueStore((s) => s.currentIndex)
 
@@ -80,9 +82,27 @@ export function TransportBar() {
               Preparing karaoke…
             </span>
           ) : null}
+          <label className="volume" title="Volume (↑ / ↓, m to mute)">
+            <button
+              className="volume-mute"
+              aria-label={volume === 0 ? 'Unmute' : 'Mute'}
+              onClick={() => engine.setVolume(volume === 0 ? 1 : 0)}
+            >
+              {volume === 0 ? '🔇' : volume < 0.5 ? '🔉' : '🔊'}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={volume}
+              aria-label="Volume"
+              onChange={(e) => engine.setVolume(Number(e.target.value))}
+            />
+          </label>
           <button
             title="Fullscreen (f)"
-            onClick={() => void window.karaoke?.toggleFullscreen()}
+            onClick={() => void toggleFullscreen()}
           >
             ⛶
           </button>

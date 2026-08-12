@@ -23,6 +23,14 @@ declare global {
     karaoke?: {
       store: { get: (key: string) => Promise<unknown>; set: (key: string, value: unknown) => Promise<void> }
       toggleFullscreen: () => Promise<void>
+      /** Optional: absent if the renderer is paired with an older preload. */
+      exitFullscreen?: () => Promise<void>
+      /** LAN remote control bridge; absent outside Electron. */
+      remote?: {
+        publish: (state: unknown, serverBase: string) => Promise<void>
+        info: () => Promise<{ urls: string[]; token: string; port: number } | null>
+        onCommand: (fn: (cmd: unknown) => void) => () => void
+      }
       platform: string
     }
   }

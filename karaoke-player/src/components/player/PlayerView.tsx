@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { leaveFullscreen, toggleFullscreen } from '../../player/fullscreen'
 import { nudgeLyricOffset } from '../../player/lyricSync'
 import { engine } from '../../player/PlaybackEngine'
 import { playNextInQueue } from '../../player/usePlaybackEngine'
@@ -49,7 +50,18 @@ export function PlayerView() {
           engine.toggleTrack()
           break
         case 'f':
-          void window.karaoke?.toggleFullscreen()
+          void toggleFullscreen()
+          break
+        case 'ArrowUp':
+          e.preventDefault()
+          engine.nudgeVolume(0.05)
+          break
+        case 'ArrowDown':
+          e.preventDefault()
+          engine.nudgeVolume(-0.05)
+          break
+        case 'm':
+          engine.setVolume(engine.getVolume() === 0 ? 1 : 0)
           break
         case '[':
           nudgeLyricOffset(-100)
@@ -59,7 +71,9 @@ export function PlayerView() {
           break
         case 'Escape':
           e.preventDefault()
-          if (document.fullscreenElement) void document.exitFullscreen()
+          // Also drops the Electron window out of fullscreen, which the old
+          // document.exitFullscreen() could not do.
+          void leaveFullscreen()
           setView('library')
           break
       }
@@ -71,7 +85,7 @@ export function PlayerView() {
   return (
     <div className="player-view">
       <VideoSurface />
-      <SubtitleOverlay />
+      {song?.embedded_lyrics ? null : <SubtitleOverlay />}
       {status === 'loading' ? <div className="player-status">Loading…</div> : null}
       {status === 'error' && error ? <div className="player-status player-status--error">{error}</div> : null}
       {status === 'ended' && !song ? <div className="player-status">Queue finished</div> : null}

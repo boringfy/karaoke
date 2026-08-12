@@ -12,6 +12,8 @@ interface PlayerState {
   coarseTime: number
   subtitle: SubtitleDoc | null
   error: string | null
+  /** Master output level, 0..1. */
+  volume: number
 }
 
 export const usePlayerStore = create<PlayerState>(() => ({
@@ -22,4 +24,5 @@ export const usePlayerStore = create<PlayerState>(() => ({
   coarseTime: 0,
   subtitle: null,
   error: null,
+  volume: 1,
 }))

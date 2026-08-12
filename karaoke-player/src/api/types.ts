@@ -14,6 +14,9 @@ export interface Song {
   instrumental_source: 'uploaded' | 'generated' | null
   /** Persisted lyric sync adjustment; also baked into the subtitle doc's offset_ms. */
   subtitle_offset_ms: number
+  /** The MV already has karaoke lyrics burned in: no subtitle is fetched or
+   * drawn, so the player does not stack a second set of words on the video. */
+  embedded_lyrics: boolean
   has_original: boolean
   has_instrumental: boolean
   has_video: boolean
@@ -34,6 +37,7 @@ export interface SongCreate {
   artist?: string
   album?: string
   language?: Language
+  embedded_lyrics?: boolean
 }
 
 export interface SubtitleToken {
