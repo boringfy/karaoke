@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { leaveFullscreen, toggleFullscreen } from '../../player/fullscreen'
+import { useIdleChrome } from '../../player/useIdleChrome'
 import { nudgeLyricOffset } from '../../player/lyricSync'
 import { engine } from '../../player/PlaybackEngine'
 import { playNextInQueue } from '../../player/usePlaybackEngine'
@@ -15,6 +16,7 @@ export function PlayerView() {
   const status = usePlayerStore((s) => s.status)
   const error = usePlayerStore((s) => s.error)
   const setView = useUiStore((s) => s.setView)
+  const chromeIdle = useIdleChrome(status === 'playing')
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -83,7 +85,7 @@ export function PlayerView() {
   }, [setView])
 
   return (
-    <div className="player-view">
+    <div className={`player-view${chromeIdle ? ' player-view--idle' : ''}`}>
       <VideoSurface />
       {song?.embedded_lyrics ? null : <SubtitleOverlay />}
       {status === 'loading' ? <div className="player-status">Loading…</div> : null}

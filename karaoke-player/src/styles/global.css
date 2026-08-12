@@ -405,6 +405,24 @@ select:focus {
   flex-direction: column;
   z-index: 50;
 }
+/* Chrome fades out while the singer is idle so the transport stops covering
+   the video. Any pointer, key or wheel event brings it straight back. */
+.player-view .transport,
+.player-view .player-back,
+.player-view .queue-panel {
+  transition: opacity 220ms ease;
+}
+.player-view--idle .transport,
+.player-view--idle .player-back,
+.player-view--idle .queue-panel {
+  opacity: 0;
+  /* Not just invisible: an unseen bar must not swallow clicks meant for the
+     video, and a focused control inside it would still be tab-reachable. */
+  pointer-events: none;
+}
+.player-view--idle {
+  cursor: none;
+}
 .video-surface {
   position: absolute;
   inset: 0;
