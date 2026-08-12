@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # Device for ML stages: "auto" picks cuda > mps > cpu.
     device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
 
+    # Abandon a pipeline stage that has run this long. Guards against a stage
+    # wedging on a hung network call or model load and blocking the queue
+    # forever. Generous: separation/alignment scale with track length.
+    stage_timeout_sec: int = 3600
+
     # Whisper model used for forced alignment (stable-ts over faster-whisper).
     whisper_model: str = "large-v3-turbo"
     whisper_compute_type: str = "int8"

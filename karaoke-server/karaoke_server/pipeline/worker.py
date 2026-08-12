@@ -24,6 +24,9 @@ from .stages import STAGE_FUNCS, StageContext, StageError
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 1.0
+# How often a running job refreshes heartbeat_at, so a wedged stage is visible
+# in the jobs table instead of looking identical to one that just started.
+HEARTBEAT_INTERVAL = 30.0
 
 
 async def enqueue_stages(
@@ -168,6 +171,26 @@ class PipelineWorker:
                     return job.id
         return None
 
+    async def _heartbeat(self, job_id: str) -> None:
+        """Refresh heartbeat_at while a job runs.
+
+        Without this, heartbeat_at stays frozen at claim time, so a wedged job
+        is indistinguishable from a freshly claimed one and nothing can tell
+        that the queue has stopped moving.
+        """
+        try:
+            while True:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                async with self.sessions() as session:
+                    await session.execute(
+                        update(Job).where(Job.id == job_id).values(heartbeat_at=utcnow())
+                    )
+                    await session.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a failed heartbeat must not kill the job
+            log.exception("heartbeat failed for job %s", job_id[:8])
+
     async def _run(self, job_id: str) -> None:
         async with self.sessions() as session:
             job = await session.get(Job, job_id)
@@ -180,13 +203,22 @@ class PipelineWorker:
         )
         error: str | None = None
         note: str | None = None
+        timeout = get_settings().stage_timeout_sec
+        heartbeat = asyncio.create_task(self._heartbeat(job_id))
         try:
-            note = await STAGE_FUNCS[stage](ctx)
+            note = await asyncio.wait_for(STAGE_FUNCS[stage](ctx), timeout)
         except StageError as e:
             error = str(e)
+        except TimeoutError:
+            # The stage is stuck. Free the worker so the rest of the queue can
+            # move; the job is marked failed and can be retried via /reprocess.
+            log.error("job %s: %s exceeded %ss, abandoning", job_id[:8], stage, timeout)
+            error = f"stage timed out after {timeout}s"
         except Exception as e:  # noqa: BLE001
             log.exception("job %s: %s crashed", job_id[:8], stage)
             error = f"{type(e).__name__}: {e}"
+        finally:
+            heartbeat.cancel()
 
         async with self.sessions() as session:
             job = await session.get(Job, job_id)
@@ -221,6 +253,10 @@ class PipelineWorker:
         rendered = song.subtitle_json_path is not None
         if chain_failed:
             song.status = SongStatus.failed.value
+        elif song.embedded_lyrics:
+            # No subtitle is expected — the MV carries the words. Without this
+            # the song would sit at "pending" forever for want of a render.
+            song.status = SongStatus.ready.value
         elif rendered:
             threshold = get_settings().song_review_threshold
             if song.alignment_confidence is not None and song.alignment_confidence < threshold:

@@ -99,6 +99,8 @@ async def stage_ingest(ctx: StageContext) -> str | None:
 async def stage_lyrics(ctx: StageContext) -> str | None:
     async with ctx.sessions() as session:
         song = await ctx.get_song(session)
+        if song.embedded_lyrics:
+            return "skipped"
         if not song.title:
             raise StageError("song has no title; set one, then refetch lyrics")
         expected = song.language if song.language != "unknown" else None
@@ -247,6 +249,8 @@ async def stage_align(ctx: StageContext) -> str | None:
 
     async with ctx.sessions() as session:
         song = await ctx.get_song(session)
+        if song.embedded_lyrics:
+            return "skipped"
         lines, anchors = load_lyrics(song)
         # Prefer the clean vocal stem; fall back to the original mix.
         audio = None
@@ -380,6 +384,8 @@ def _apply_furigana(doc: SubtitleDoc) -> None:
 async def stage_annotate(ctx: StageContext) -> str | None:
     async with ctx.sessions() as session:
         song = await ctx.get_song(session)
+        if song.embedded_lyrics:
+            return "skipped"
         if song.language != "ja":
             return "skipped"
         if not song.subtitle_json_path:
@@ -397,6 +403,8 @@ async def stage_annotate(ctx: StageContext) -> str | None:
 async def stage_render(ctx: StageContext) -> str | None:
     async with ctx.sessions() as session:
         song = await ctx.get_song(session)
+        if song.embedded_lyrics:
+            return "skipped"
         if not song.subtitle_json_path or not Path(song.subtitle_json_path).exists():
             raise StageError("no subtitle.json to render")
         doc = SubtitleDoc.load_json(

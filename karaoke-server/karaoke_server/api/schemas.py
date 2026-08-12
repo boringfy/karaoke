@@ -11,6 +11,9 @@ class SongCreate(BaseModel):
     artist: str | None = Field(default=None, max_length=512)
     album: str | None = Field(default=None, max_length=512)
     language: Literal["en", "zh", "ja", "unknown"] = "unknown"
+    # Set when the MV already has karaoke lyrics burned in: the lyrics chain is
+    # skipped and the player draws no subtitle overlay.
+    embedded_lyrics: bool = False
 
 
 class SongUpdate(BaseModel):
@@ -18,6 +21,7 @@ class SongUpdate(BaseModel):
     artist: str | None = None
     album: str | None = None
     language: Literal["en", "zh", "ja", "unknown"] | None = None
+    embedded_lyrics: bool | None = None
 
 
 class JobOut(BaseModel):
@@ -47,6 +51,7 @@ class SongOut(BaseModel):
     alignment_confidence: float | None
     instrumental_source: str | None
     subtitle_offset_ms: int = 0
+    embedded_lyrics: bool = False
     has_original: bool = False
     has_instrumental: bool = False
     has_video: bool = False

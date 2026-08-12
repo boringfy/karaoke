@@ -135,7 +135,11 @@ async def create_song(body: SongCreate, session: AsyncSession = Depends(get_sess
     """Step 1 of the workflow: create the song entry, get its id, then upload
     files against that id."""
     song = Song(
-        title=body.title, artist=body.artist, album=body.album, language=body.language
+        title=body.title,
+        artist=body.artist,
+        album=body.album,
+        language=body.language,
+        embedded_lyrics=body.embedded_lyrics,
     )
     session.add(song)
     await session.commit()

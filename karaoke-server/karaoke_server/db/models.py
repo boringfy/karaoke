@@ -105,6 +105,13 @@ class Song(Base):
         Integer, default=0, server_default="0", nullable=False
     )
 
+    # The MV already burns karaoke lyrics into the picture. Skip the whole
+    # lyrics/alignment chain and render no subtitle overlay, so the player does
+    # not draw a second set of words on top of the ones in the video.
+    embedded_lyrics: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+
     status: Mapped[str] = mapped_column(String(16), default=SongStatus.pending.value)
     alignment_confidence: Mapped[float | None] = mapped_column(Float)
     source_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
