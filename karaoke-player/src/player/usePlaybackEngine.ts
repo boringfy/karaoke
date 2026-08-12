@@ -7,6 +7,7 @@ import { useQueueStore } from '../stores/queueStore'
 import { useUiStore } from '../stores/uiStore'
 
 const VOLUME_KEY = 'volume'
+const TRACK_KEY = 'trackPreference'
 
 /** Volume persists across restarts, matching how the queue is stored:
  * Electron's JSON store when available, localStorage in a browser. */
@@ -28,6 +29,24 @@ async function restoreVolume(): Promise<void> {
 function saveVolume(volume: number): void {
   if (window.karaoke) void window.karaoke.store.set(VOLUME_KEY, volume)
   else localStorage.setItem(VOLUME_KEY, String(volume))
+}
+
+/** The original/karaoke choice is a standing preference, so it outlives both
+ * the current song and the current session. */
+async function restoreTrackPreference(): Promise<void> {
+  try {
+    const raw = window.karaoke
+      ? await window.karaoke.store.get(TRACK_KEY)
+      : localStorage.getItem(TRACK_KEY)
+    if (raw === 'original' || raw === 'instrumental') engine.setTrackPreference(raw)
+  } catch {
+    // keep the default of karaoke mode
+  }
+}
+
+function saveTrackPreference(track: string): void {
+  if (window.karaoke) void window.karaoke.store.set(TRACK_KEY, track)
+  else localStorage.setItem(TRACK_KEY, track)
 }
 
 /** Load a song into the engine, fetch its subtitle, and start playback. */
@@ -103,9 +122,11 @@ export function usePlaybackEngineBinding() {
         usePlayerStore.setState({ volume })
         void saveVolume(volume)
       }),
+      engine.on('trackpreference', (track) => saveTrackPreference(track)),
       engine.on('ended', () => void playNextInQueue()),
     ]
     void restoreVolume()
+    void restoreTrackPreference()
     const coarseTimer = setInterval(() => {
       usePlayerStore.setState({ coarseTime: engine.getTime() })
     }, 250)

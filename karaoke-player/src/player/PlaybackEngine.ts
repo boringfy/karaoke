@@ -11,6 +11,9 @@ export interface EngineEvents {
   loaded: (song: Song) => void
   durationchange: (duration: number) => void
   volume: (volume: number) => void
+  /** The user's standing original/karaoke choice, which may differ from the
+   * track actually playing when a song has no instrumental. */
+  trackpreference: (track: AudioTrack) => void
 }
 
 const DRIFT_INTERVAL_MS = 500
@@ -45,6 +48,8 @@ export class PlaybackEngine {
   private song: Song | null = null
   private status: EngineStatus = 'idle'
   private track: AudioTrack = 'instrumental'
+  /** Standing original/karaoke choice, applied to each song as it loads. */
+  private trackPreference: AudioTrack = 'instrumental'
   private loadToken = 0
   private driftTimer: ReturnType<typeof setInterval> | null = null
   private lastSeekAt = 0
@@ -56,6 +61,7 @@ export class PlaybackEngine {
     loaded: new Set(),
     durationchange: new Set(),
     volume: new Set(),
+    trackpreference: new Set(),
   }
 
   constructor() {
@@ -220,8 +226,10 @@ export class PlaybackEngine {
       }
     }
 
-    // Default to instrumental (karaoke mode) when both tracks exist.
-    this.track = song.has_instrumental ? 'instrumental' : 'original'
+    // Carry the standing choice into every song. A song with no instrumental
+    // falls back to the original for playback but leaves the preference alone,
+    // so the next song that has one returns to karaoke mode.
+    this.track = song.has_instrumental ? this.trackPreference : 'original'
     this.applyGains(true)
     this.emit('track', this.track)
     this.emit('durationchange', this.getDuration())
@@ -364,8 +372,20 @@ export class PlaybackEngine {
   setTrack(track: AudioTrack): void {
     if (!this.canToggle() || track === this.track) return
     this.track = track
+    // An explicit toggle is a standing choice, not a per-song one.
+    this.trackPreference = track
     this.applyGains(false)
     this.emit('track', track)
+    this.emit('trackpreference', track)
+  }
+
+  getTrackPreference(): AudioTrack {
+    return this.trackPreference
+  }
+
+  /** Restore the persisted choice at startup, without touching what is loaded. */
+  setTrackPreference(track: AudioTrack): void {
+    this.trackPreference = track
   }
 
   toggleTrack(): void {
