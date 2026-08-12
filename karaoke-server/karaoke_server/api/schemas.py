@@ -22,6 +22,7 @@ class SongUpdate(BaseModel):
     album: str | None = None
     language: Literal["en", "zh", "ja", "unknown"] | None = None
     embedded_lyrics: bool | None = None
+    video_offset_ms: int | None = Field(default=None, ge=-30000, le=30000)
 
 
 class JobOut(BaseModel):
@@ -52,6 +53,7 @@ class SongOut(BaseModel):
     instrumental_source: str | None
     subtitle_offset_ms: int = 0
     embedded_lyrics: bool = False
+    video_offset_ms: int = 0
     has_original: bool = False
     has_instrumental: bool = False
     has_video: bool = False

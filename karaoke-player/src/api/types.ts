@@ -17,6 +17,9 @@ export interface Song {
   /** The MV already has karaoke lyrics burned in: no subtitle is fetched or
    * drawn, so the player does not stack a second set of words on the video. */
   embedded_lyrics: boolean
+  /** Shifts the MV against the audio; positive runs the video ahead, pulling
+   * lyrics burned into the picture earlier. */
+  video_offset_ms: number
   has_original: boolean
   has_instrumental: boolean
   has_video: boolean

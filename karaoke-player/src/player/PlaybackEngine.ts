@@ -111,6 +111,8 @@ export class PlaybackEngine {
 
   /** True when the MV is much shorter than the audio and repeats. */
   private videoLoops = false
+  /** Per-song MV shift in seconds; positive runs the video ahead. */
+  private videoOffsetSec = 0
 
   private get slaves(): HTMLMediaElement[] {
     const out: HTMLMediaElement[] = []
@@ -216,6 +218,7 @@ export class PlaybackEngine {
     // MV shorter than the audio (album track over a TV-size video): loop the
     // video when the audio is much longer (>1.5x), otherwise let it end and
     // freeze on the last frame while the audio plays out.
+    this.videoOffsetSec = (song.video_offset_ms ?? 0) / 1000
     this.videoLoops = false
     this.video.loop = false
     if (song.has_video) {
@@ -356,8 +359,12 @@ export class PlaybackEngine {
   private videoTargetTime(t: number): number {
     const vd = this.video.duration
     if (!Number.isFinite(vd) || vd <= 0) return t
-    if (this.videoLoops) return t % vd
-    return Math.min(t, vd)
+    // Positive offset runs the video ahead of the audio, so lyrics burned into
+    // the picture arrive earlier. Applied here because both seeking and drift
+    // correction resolve the video's target through this one function.
+    const shifted = t + this.videoOffsetSec
+    if (this.videoLoops) return ((shifted % vd) + vd) % vd
+    return Math.min(Math.max(shifted, 0), vd)
   }
 
   seekBy(delta: number): void {

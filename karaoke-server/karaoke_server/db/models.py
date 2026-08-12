@@ -112,6 +112,13 @@ class Song(Base):
         Boolean, default=False, server_default="0", nullable=False
     )
 
+    # Shifts the MV against the audio. Positive runs the video ahead, which
+    # pulls lyrics burned into the picture earlier. subtitle_offset_ms cannot
+    # do this: it moves our own overlay, not the video's own frames.
+    video_offset_ms: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
     status: Mapped[str] = mapped_column(String(16), default=SongStatus.pending.value)
     alignment_confidence: Mapped[float | None] = mapped_column(Float)
     source_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
