@@ -73,23 +73,25 @@ export function SongRow({ song, onEdit }: Props) {
         {song.has_subtitle ? <span className="asset" title="Karaoke subtitles">Lyr</span> : null}
       </td>
       <td className="song-cell-actions">
-        <button className="primary" disabled={!playable} onClick={() => void playSong(song)}>
-          ▶ Play
-        </button>
-        <button
-          disabled={!playable}
-          onClick={() => {
-            addToQueue({ songId: song.id, title: song.title, artist: song.artist })
-            toast(`Added "${song.title}" to queue`)
-          }}
-        >
-          + Queue
-        </button>
-        <button onClick={() => openWizard(song.id)}>Files</button>
-        <button onClick={() => onEdit(song)}>Edit</button>
-        <button className="danger" onClick={onDelete}>
-          Delete
-        </button>
+        <div className="song-actions">
+          <button className="primary" disabled={!playable} onClick={() => void playSong(song)}>
+            ▶ Play
+          </button>
+          <button
+            disabled={!playable}
+            onClick={() => {
+              addToQueue({ songId: song.id, title: song.title, artist: song.artist })
+              toast(`Added "${song.title}" to queue`)
+            }}
+          >
+            + Queue
+          </button>
+          <button onClick={() => openWizard(song.id)}>Files</button>
+          <button onClick={() => onEdit(song)}>Edit</button>
+          <button className="danger" onClick={onDelete}>
+            Delete
+          </button>
+        </div>
       </td>
     </tr>
   )

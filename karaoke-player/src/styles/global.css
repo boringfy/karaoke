@@ -170,11 +170,18 @@ select:focus {
   color: var(--text-dim);
   font-size: 12px;
 }
+/* The cell itself must stay a table cell: `display: flex` on a <td> drops it
+   out of the row box, so the buttons lose the row's vertical alignment and the
+   row divider stops short of them. Flex the wrapper inside instead. */
 .song-cell-actions {
+  width: 1%;
+  white-space: nowrap;
+}
+.song-actions {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .song-cell-assets .asset {
   display: inline-block;
