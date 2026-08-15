@@ -53,7 +53,21 @@ export function SongRow({ song, onEdit }: Props) {
           )}
           <div>
             <div className="song-title">{song.title}</div>
-            {song.artist ? <div className="song-artist">{song.artist}</div> : null}
+            {song.artist ? (
+              <button
+                type="button"
+                className="song-artist song-artist--link"
+                title={`Show only ${song.artist}`}
+                onClick={(e) => {
+                  // The whole row is clickable to play; browsing a singer must
+                  // not also start one.
+                  e.stopPropagation()
+                  useLibraryStore.getState().setArtistFilter(song.artist as string)
+                }}
+              >
+                {song.artist}
+              </button>
+            ) : null}
           </div>
         </div>
       </td>

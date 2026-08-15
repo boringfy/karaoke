@@ -8,9 +8,10 @@ import { SearchBar } from './SearchBar'
 import { SongRow } from './SongRow'
 
 export function LibraryView() {
-  const { items, total, offset, loading, error } = useLibraryStore()
+  const { items, total, offset, loading, error, artistFilter } = useLibraryStore()
   const refresh = useLibraryStore((s) => s.refresh)
   const setOffset = useLibraryStore((s) => s.setOffset)
+  const setArtistFilter = useLibraryStore((s) => s.setArtistFilter)
   const openWizard = useUiStore((s) => s.openWizard)
   const [editing, setEditing] = useState<Song | null>(null)
 
@@ -30,6 +31,26 @@ export function LibraryView() {
           </button>
         </div>
       </header>
+
+      {artistFilter ? (
+        <div className="filter-bar">
+          <span className="filter-chip">
+            <span className="filter-chip-label">Singer</span>
+            <span className="filter-chip-value">{artistFilter}</span>
+            <button
+              type="button"
+              aria-label="Clear singer filter"
+              title="Show all singers"
+              onClick={() => setArtistFilter('')}
+            >
+              ✕
+            </button>
+          </span>
+          <span className="filter-count">
+            {total} {total === 1 ? 'song' : 'songs'}
+          </span>
+        </div>
+      ) : null}
 
       {error ? <div className="library-error">{error}</div> : null}
 

@@ -9,11 +9,14 @@ interface LibraryState {
   total: number
   q: string
   statusFilter: string
+  /** Exact artist to browse, or '' for the whole library. */
+  artistFilter: string
   offset: number
   loading: boolean
   error: string | null
   setQuery: (q: string) => void
   setStatusFilter: (status: string) => void
+  setArtistFilter: (artist: string) => void
   setOffset: (offset: number) => void
   refresh: () => Promise<void>
   /** Patch a single song in place (e.g. after an SSE status update). */
@@ -25,6 +28,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   total: 0,
   q: '',
   statusFilter: '',
+  artistFilter: '',
   offset: 0,
   loading: false,
   error: null,
@@ -37,18 +41,25 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     set({ statusFilter, offset: 0 })
     void get().refresh()
   },
+  setArtistFilter: (artistFilter) => {
+    // Clearing the text search alongside it: a leftover query would silently
+    // hide songs by the artist the user just asked to see.
+    set({ artistFilter, q: artistFilter ? '' : get().q, offset: 0 })
+    void get().refresh()
+  },
   setOffset: (offset) => {
     set({ offset })
     void get().refresh()
   },
 
   refresh: async () => {
-    const { q, statusFilter, offset } = get()
+    const { q, statusFilter, artistFilter, offset } = get()
     set({ loading: true, error: null })
     try {
       const res = await listSongs({
         q: q || undefined,
         status: statusFilter || undefined,
+        artist: artistFilter || undefined,
         limit: PAGE_SIZE,
         offset,
       })

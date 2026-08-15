@@ -11,6 +11,8 @@ import type {
 
 export interface ListParams {
   q?: string
+  /** Exact artist match, unlike the fuzzy `q`. */
+  artist?: string
   status?: string
   language?: string
   limit?: number

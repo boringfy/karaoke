@@ -152,6 +152,9 @@ async def list_songs(
     status: str | None = None,
     language: str | None = None,
     q: str | None = Query(default=None, description="fuzzy title/artist filter"),
+    artist: str | None = Query(
+        default=None, description="exact artist match; use to browse one singer"
+    ),
     limit: int = Query(default=50, le=500),
     offset: int = 0,
 ):
@@ -160,6 +163,10 @@ async def list_songs(
         stmt = stmt.where(Song.status == status)
     if language:
         stmt = stmt.where(Song.language == language)
+    if artist:
+        # Exact, unlike q: clicking a singer should show that singer only, not
+        # everyone whose name happens to contain the same substring.
+        stmt = stmt.where(Song.artist == artist)
     if q:
         like = f"%{q}%"
         stmt = stmt.where(or_(Song.title.ilike(like), Song.artist.ilike(like)))
