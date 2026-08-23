@@ -31,6 +31,30 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/songs", tags=["songs"])
 
+# Content-Type for served audio, keyed by stored suffix. Python's mimetypes
+# has no entry for .m4a (-> application/octet-stream) and maps .opus to
+# audio/opus, so leaving Starlette to guess mislabels our two commonest
+# formats. Browsers and ExoPlayer sniff the bytes and cope; AVFoundation
+# trusts the header alone and refuses the stream.
+#
+# .opus must be audio/ogg, NOT audio/opus: audio/opus denotes raw Opus
+# packets, while encode_opus() writes Ogg-encapsulated Opus (magic "OggS").
+#
+# Covers every extension in storage.AUDIO_EXTS, since an uploaded instrumental
+# keeps whatever format it arrived in.
+AUDIO_MEDIA_TYPES = {
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".aac": "audio/aac",
+    ".opus": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".wav": "audio/wav",
+    ".aiff": "audio/aiff",
+    ".wma": "audio/x-ms-wma",
+}
+
 # Songs with a video transcode currently running (avoid duplicate jobs).
 _transcoding_videos: set[str] = set()
 
@@ -371,7 +395,10 @@ async def stream_audio(
     path = song.original_path if track == "original" else song.instrumental_path
     if not path or not Path(path).exists():
         raise HTTPException(404, f"no {track} audio for this song")
-    return FileResponse(path)
+    # The URL carries no file extension, so a client that will not sniff the
+    # body has only this header to identify the container.
+    media_type = AUDIO_MEDIA_TYPES.get(Path(path).suffix.lower())
+    return FileResponse(path, media_type=media_type)
 
 
 @router.get("/{song_id}/video")

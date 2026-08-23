@@ -93,6 +93,27 @@ async def test_song_crud_and_upload_flow(client):
     r = await client.get(f"/api/v1/songs/{song_id}/audio?track=instrumental")
     assert r.status_code == 200
     assert r.content[:4] == b"RIFF"
+    # The URL has no extension, so this header is the only container hint a
+    # client that refuses to sniff (AVFoundation) ever sees.
+    assert r.headers["content-type"] == "audio/wav"
+
+
+def test_audio_media_types_cover_every_uploadable_extension():
+    """A song keeps whatever format was uploaded, so any AUDIO_EXTS member can
+    end up being served."""
+    from karaoke_server.api.songs import AUDIO_MEDIA_TYPES
+    from karaoke_server.media.storage import AUDIO_EXTS
+
+    assert not AUDIO_EXTS - AUDIO_MEDIA_TYPES.keys()
+
+
+def test_opus_is_labelled_ogg_not_audio_opus():
+    """encode_opus() writes Ogg-encapsulated Opus. audio/opus means raw Opus
+    packets, and mislabelling it that way makes iOS refuse the stream."""
+    from karaoke_server.api.songs import AUDIO_MEDIA_TYPES
+
+    assert AUDIO_MEDIA_TYPES[".opus"] == "audio/ogg"
+    assert AUDIO_MEDIA_TYPES[".m4a"] == "audio/mp4"
 
 
 async def test_duplicate_original_rejected(client):
