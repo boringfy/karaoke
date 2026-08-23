@@ -118,7 +118,7 @@ struct SettingsSheet: View {
         NavigationStack {
             Form {
                 Section("Server address") {
-                    TextField("192.168.0.109:8787", text: $address)
+                    TextField("192.168.1.50:8787", text: $address)
                         .font(.body.monospaced())
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()

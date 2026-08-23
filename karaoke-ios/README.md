@@ -9,7 +9,7 @@ this app browses what's there and plays it.
 
 ## What it does
 
-- **Server setup once** — type the LAN address (`192.168.0.109`, port 8787
+- **Server setup once** — type the LAN address (`192.168.1.50`, port 8787
   assumed); it's pinged before being saved, then remembered.
 - **Library** — cover-art grid, search over song and singer, tap a singer to
   filter to them, badges for songs the server is still processing.
