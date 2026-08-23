@@ -15,15 +15,20 @@ struct LyricsCanvas: View {
 
     var body: some View {
         TimelineView(.animation) { _ in
+            // The clock is sampled HERE, in the body, and handed to the
+            // renderer as a value. Reading it inside the Canvas closure instead
+            // leaves the canvas's captured state identical on every tick, so
+            // SwiftUI decides nothing changed and never redraws — the lyrics
+            // freeze on the first line while the song plays on.
+            let t = engine.positionSec - Double(offsetMs) / 1000
             Canvas { context, size in
-                draw(&context, size)
+                draw(&context, size, at: t)
             }
         }
         .allowsHitTesting(false)
     }
 
-    private func draw(_ ctx: inout GraphicsContext, _ size: CGSize) {
-        let t = engine.positionSec - Double(offsetMs) / 1000
+    private func draw(_ ctx: inout GraphicsContext, _ size: CGSize, at t: Double) {
         guard let index = subtitle.lineIndex(at: t) else { return } // rest: draw nothing
         let line = subtitle.lines[index]
         guard !line.tokens.isEmpty else { return }
