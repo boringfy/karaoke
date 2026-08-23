@@ -1,0 +1,23 @@
+# The venv alone is several GB and would be shipped as build context.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Local data, models and databases live in a mounted volume, never the image.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local config; the container is configured through compose.
+.env
+
+docs/
+tests/
+scratch_*.py

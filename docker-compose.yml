@@ -1,0 +1,39 @@
+services:
+  karaoke-server:
+    build:
+      context: ./karaoke-server
+    image: karaoke-server:local
+    container_name: karaoke-server
+    restart: unless-stopped
+
+    # Host config lives in karaoke-server/.env (gitignored). KARAOKE_DATA_DIR
+    # from that file is a host path, so it is overridden below with the
+    # in-container mount point.
+    env_file:
+      - ./karaoke-server/.env
+    environment:
+      KARAOKE_HOST: 0.0.0.0
+      KARAOKE_PORT: "8787"
+      HF_HOME: /nvmex2/karaoke/data/models/hf
+
+    volumes:
+      # The single stateful directory: karaoke.db, songs/, models/, raw_videos/.
+      #
+      # Mounted at the SAME path inside the container, not at /data: the
+      # database stores absolute media paths, so a different mount point makes
+      # every file lookup 404 while the song list still looks fine. Identical
+      # paths also keep the data usable by a native (non-Docker) server.
+      #
+      # Bind mount rather than a named volume so files stay directly reachable
+      # on the host for SMB copies and ffprobe checks.
+      - /nvmex2/karaoke/data:/nvmex2/karaoke/data
+
+    ports:
+      - "8787:8787"
+
+    # Match the host owner of /nvmex2/karaoke/data so nothing is root-owned.
+    user: "1000:1000"
+
+    # Separation and alignment are CPU-bound and will otherwise saturate every
+    # core; leave a couple free so the desktop stays responsive.
+    cpus: 14
