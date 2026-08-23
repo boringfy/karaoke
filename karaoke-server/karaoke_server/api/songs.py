@@ -64,6 +64,33 @@ async def _transcode_audio_if_needed(song_id: str, src: Path, kind: str) -> None
         log.exception("audio transcode failed for song %s %s; keeping original", song_id, kind)
 
 
+async def _cover_from_video_if_missing(song_id: str) -> None:
+    """Background: derive cover art from the MV when the song has none.
+
+    Only fills a gap — an uploaded or tag-extracted cover is always preferred
+    and is never overwritten. Runs after upload so a song with a video always
+    has something to show in the library and behind audio-only playback.
+    """
+    async with db_session.session_factory()() as session:
+        song = await session.get(Song, song_id)
+        if song is None or not song.video_path:
+            return
+        if song.cover_path and Path(song.cover_path).exists():
+            return  # real artwork wins
+        src = Path(song.video_path)
+        if not src.exists():
+            return
+        dest = storage.song_dir(song_id) / "cover.jpg"
+        try:
+            await asyncio.to_thread(ffmpeg.grab_video_frame, src, dest)
+        except ffmpeg.FfmpegError:
+            log.exception("cover-from-video failed for song %s", song_id)
+            return
+        song.cover_path = str(dest)
+        await session.commit()
+        log.info("cover derived from video: song %s", song_id)
+
+
 async def _transcode_video_if_needed(song_id: str, src: Path) -> None:
     """Background: re-encode a just-uploaded video to 8-bit H.264 when it is
     anything else (HEVC-10bit, AV1, ...), then point the song at the result.
@@ -287,6 +314,7 @@ async def upload_video(
     # Any non-H.264/8-bit source (HEVC-10bit, AV1...) software-decodes and
     # stutters on every client; convert it in the background.
     asyncio.create_task(_transcode_video_if_needed(song_id, path))
+    asyncio.create_task(_cover_from_video_if_missing(song_id))
     return UploadResult(song_id=song_id, kind="video", path_name=path.name, sha256=sha)
 
 
@@ -310,11 +338,13 @@ async def upload_cover(
         )
     dest = storage.song_dir(song_id)
     path, sha = await storage.save_upload(dest, "cover", file.filename or "", file)
-    # Auto-scale: cap the long side at 1024px and re-encode as JPEG so
-    # multi-MB photos/scans don't weigh down the library. Unreadable files
-    # (or already-small ones on a failed probe) are kept as uploaded.
+    # Normalize: centre-crop to square and cap the side at 1024px, re-encoding
+    # as JPEG so multi-MB photos/scans don't weigh down the library. Anything
+    # oversized *or* non-square needs this; only an already-square, already-
+    # small image can be kept byte-for-byte. Unreadable files (failed probe)
+    # are kept as uploaded.
     size = await asyncio.to_thread(ffmpeg.probe_image_size, path)
-    if size and max(size) > ffmpeg.COVER_MAX_SIDE:
+    if size and (max(size) > ffmpeg.COVER_MAX_SIDE or size[0] != size[1]):
         scaled = dest / "cover.jpg"
         try:
             await asyncio.to_thread(ffmpeg.scale_cover, path, scaled)

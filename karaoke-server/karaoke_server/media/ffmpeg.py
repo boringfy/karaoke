@@ -157,6 +157,16 @@ def extract_audio(src: Path, dest_dir: Path, stem: str = "original") -> Path:
 
 COVER_MAX_SIDE = 1024
 
+# Covers are always square. The library grid and the blurred playback
+# background both assume a 1:1 tile, and mixing aspect ratios there looks
+# broken. Centre-crop to the largest square the source allows, then fit the
+# box: cropping rather than padding keeps the art edge-to-edge, which matters
+# most for the wide video frames MVs produce.
+COVER_FILTER = (
+    f"crop='min(iw,ih)':'min(iw,ih)',"
+    f"scale={COVER_MAX_SIDE}:{COVER_MAX_SIDE}:force_original_aspect_ratio=decrease"
+)
+
 
 def probe_image_size(path: Path) -> tuple[int, int] | None:
     """(width, height) of an image, or None if unreadable."""
@@ -176,24 +186,47 @@ def probe_image_size(path: Path) -> tuple[int, int] | None:
 
 
 def scale_cover(src: Path, dest: Path) -> None:
-    """Normalize uploaded cover art: cap the long side at COVER_MAX_SIDE and
-    re-encode as JPEG. Uploads are often camera photos or full-res scans of
-    several MB; covers render at ~48px in lists and as a blurred background,
-    so 1024px is plenty and keeps the library snappy."""
-    # Fit inside a square box, keeping aspect ratio. Callers only invoke this
-    # for images larger than the box, so no upscaling can occur.
-    scale = f"scale={COVER_MAX_SIDE}:{COVER_MAX_SIDE}:force_original_aspect_ratio=decrease"
+    """Normalize cover art: centre-crop to square, cap the side at
+    COVER_MAX_SIDE and re-encode as JPEG. Uploads are often camera photos or
+    full-res scans of several MB; covers render at ~48px in lists and as a
+    blurred background, so 1024px is plenty and keeps the library snappy."""
     tmp = dest.with_suffix(dest.suffix + ".part.jpg")
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-v", "error", "-i", str(src),
-             "-frames:v", "1", "-vf", scale, "-qscale:v", "3", str(tmp)],
+             "-frames:v", "1", "-vf", COVER_FILTER, "-qscale:v", "3", str(tmp)],
             capture_output=True, text=True, timeout=120, check=True,
         )
     except subprocess.SubprocessError as e:
         tmp.unlink(missing_ok=True)
         stderr = getattr(e, "stderr", "") or str(e)
         raise FfmpegError(stderr.strip()[-500:]) from e
+    tmp.replace(dest)
+
+
+def grab_video_frame(src: Path, dest: Path, at_sec: float = 1.0) -> None:
+    """Pull a single frame out of a video and write it as cover-sized JPEG.
+
+    Seeks slightly past the start by default: the literal frame at 0 is very
+    often a black fade-in or a distributor logo, which makes a poor cover.
+    """
+    tmp = dest.with_suffix(dest.suffix + ".part.jpg")
+    try:
+        subprocess.run(
+            # -ss before -i seeks by keyframe, which is fast and accurate
+            # enough for a still. -noaccurate_seek keeps it cheap on long MVs.
+            ["ffmpeg", "-y", "-v", "error", "-noaccurate_seek",
+             "-ss", str(max(0.0, at_sec)), "-i", str(src),
+             "-frames:v", "1", "-vf", COVER_FILTER, "-qscale:v", "3", str(tmp)],
+            capture_output=True, text=True, timeout=120, check=True,
+        )
+    except subprocess.SubprocessError as e:
+        tmp.unlink(missing_ok=True)
+        stderr = getattr(e, "stderr", "") or str(e)
+        raise FfmpegError(stderr.strip()[-500:]) from e
+    if not tmp.exists() or tmp.stat().st_size == 0:
+        tmp.unlink(missing_ok=True)
+        raise FfmpegError(f"no frame decoded at {at_sec}s")
     tmp.replace(dest)
 
 
