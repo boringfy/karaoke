@@ -74,14 +74,12 @@ struct APIClient: Sendable {
         var comps = URLComponents(
             url: api.appendingPathComponent("songs/\(songId)/audio"),
             resolvingAgainstBaseURL: false)!
-        // `client=ios` asks the server to label the response with a real audio
-        // media type. AVFoundation identifies the container from that header
-        // alone (the URL has no extension) and refuses the stream without it;
-        // every other client keeps the untouched default response.
-        comps.queryItems = [
-            URLQueryItem(name: "track", value: track),
-            URLQueryItem(name: "client", value: "ios"),
-        ]
+        // This URL carries no file extension, so AVFoundation identifies the
+        // container purely from the response's Content-Type. karaoke-server
+        // labels audio with its real container type as of "Label served audio
+        // with its real container type"; against a server older than that,
+        // every song fails to open. See BACKEND_REQUIREMENTS.md.
+        comps.queryItems = [URLQueryItem(name: "track", value: track)]
         return comps.url!
     }
 

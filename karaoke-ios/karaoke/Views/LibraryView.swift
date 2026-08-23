@@ -148,26 +148,29 @@ struct SongCard: View {
     var body: some View {
         Button(action: play) {
             VStack(alignment: .leading, spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.quaternary)
-                    if song.hasCover, let api = config.client {
-                        AsyncImage(url: api.coverURL(song)) { image in
-                            image.resizable().scaledToFill()
-                        } placeholder: {
-                            Image(systemName: "music.note")
+                // The square tile decides its own size and the artwork is laid
+                // over it: art in a ZStack sizes the stack instead, so a cover
+                // wider than the cell spills across its neighbours.
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.quaternary)
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        if song.hasCover, let api = config.client {
+                            AsyncImage(url: api.coverURL(song)) { image in
+                                image.resizable().scaledToFill()
+                            } placeholder: {
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 34))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Image(systemName: song.hasVideo ? "film" : "music.note")
                                 .font(.system(size: 34))
                                 .foregroundStyle(.secondary)
                         }
-                    } else {
-                        Image(systemName: song.hasVideo ? "film" : "music.note")
-                            .font(.system(size: 34))
-                            .foregroundStyle(.secondary)
                     }
-                }
-                .aspectRatio(1, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(alignment: .topTrailing) { badge }
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(alignment: .topTrailing) { badge }
 
                 Text(song.displayTitle)
                     .font(.headline)

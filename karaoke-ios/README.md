@@ -80,9 +80,13 @@ Measured on iOS 26, same bytes each time:
 | opus | `audio/ogg` | ✓ plays |
 
 So iOS **does** decode Opus — the server needs a correct header, not a
-transcode. Until karaoke-server sets `media_type` on that `FileResponse`, this
-app cannot play anything. The full spec, with evidence, the exact change, the
-backward-compatibility constraints and acceptance tests, is in
+transcode. This client appends **`client=ios`** to its audio URLs, asking the
+server to label the response with a real media type; requests without that
+parameter stay exactly as they are, so web and Android are untouched. Until
+karaoke-server honours it, this app cannot play anything.
+
+The full spec — evidence, the exact change, backward-compatibility constraints
+and acceptance tests — is in
 [BACKEND_REQUIREMENTS.md](BACKEND_REQUIREMENTS.md).
 
 `Info.plist` disables App Transport Security (`NSAllowsArbitraryLoads`) because

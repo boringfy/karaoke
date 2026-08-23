@@ -94,12 +94,16 @@ struct PlayerView: View {
         if let video = engine.video {
             VideoLayerView(player: video)
         } else if let song = session.current, song.hasCover, let api = config.client {
-            AsyncImage(url: api.coverURL(song)) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Color(red: 0.06, green: 0.07, blue: 0.08)
-            }
-            .blur(radius: 24)
+            Color(red: 0.06, green: 0.07, blue: 0.08)
+                .overlay {
+                    AsyncImage(url: api.coverURL(song)) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        Color.clear
+                    }
+                }
+                .clipped()
+                .blur(radius: 24)
             .overlay(Color.black.opacity(0.35))
         } else {
             Color(red: 0.06, green: 0.07, blue: 0.08)
