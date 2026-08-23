@@ -17,3 +17,9 @@ Thumbs.db
 
 # Local env files (server config lives in karaoke-server/.env)
 .env
+
+# Xcode (karaoke-ios) — per-user state and build output
+xcuserdata/
+*.xcuserstate
+DerivedData/
+/karaoke-ios/build/
