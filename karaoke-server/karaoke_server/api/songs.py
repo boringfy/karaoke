@@ -55,6 +55,40 @@ AUDIO_MEDIA_TYPES = {
     ".wma": "audio/x-ms-wma",
 }
 
+# Containers AVFoundation on iOS 18 cannot decode, so ?codec=aac must convert
+# them. Everything else is served untouched: re-encoding an mp3 or m4a would
+# lose quality for nothing.
+_NEEDS_AAC_TRANSCODE = {".opus", ".ogg", ".wma"}
+
+# One lock per cache file: without it, two requests arriving together both run
+# ffmpeg over the same source. The atomic rename keeps readers safe either way,
+# but the duplicate encode is pure waste on a CPU-bound box.
+_aac_locks: dict[Path, asyncio.Lock] = {}
+
+
+async def _aac_variant(src: Path) -> Path:
+    """Path to an AAC/MP4 rendering of `src`, transcoding once and caching it.
+
+    Returns `src` unchanged when it is already a format iOS can open. The cache
+    sits beside the source as `<stem>.aac.m4a` and is regenerated whenever the
+    source is newer, so replacing a song's audio invalidates it.
+    """
+    if src.suffix.lower() not in _NEEDS_AAC_TRANSCODE:
+        return src
+    cached = src.with_suffix(".aac.m4a")
+    if cached.exists() and cached.stat().st_mtime >= src.stat().st_mtime:
+        return cached
+
+    lock = _aac_locks.setdefault(cached, asyncio.Lock())
+    async with lock:
+        # Re-check: another request may have finished it while we waited.
+        if cached.exists() and cached.stat().st_mtime >= src.stat().st_mtime:
+            return cached
+        log.info("aac transcode start: %s", src.name)
+        await asyncio.to_thread(ffmpeg.encode_aac, src, cached)
+        log.info("aac transcode done: %s", cached.name)
+    return cached
+
 # Songs with a video transcode currently running (avoid duplicate jobs).
 _transcoding_videos: set[str] = set()
 
@@ -388,6 +422,12 @@ async def upload_cover(
 async def stream_audio(
     song_id: str,
     track: Literal["original", "instrumental"] = "instrumental",
+    codec: str | None = Query(
+        default=None,
+        description="Set to 'aac' for clients that cannot decode Opus "
+                    "(AVFoundation below iOS 26). Opus sources are transcoded "
+                    "to AAC/MP4 and cached; other formats are served as-is.",
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     """Range-request capable audio streaming for the player."""
@@ -395,10 +435,18 @@ async def stream_audio(
     path = song.original_path if track == "original" else song.instrumental_path
     if not path or not Path(path).exists():
         raise HTTPException(404, f"no {track} audio for this song")
+    served = Path(path)
+    if codec == "aac":
+        try:
+            served = await _aac_variant(served)
+        except ffmpeg.FfmpegError:
+            # Fall back to the original rather than 500: a client that asked
+            # for AAC still gets bytes, and web/Android are unaffected.
+            log.exception("aac transcode failed for song %s %s", song_id, track)
     # The URL carries no file extension, so a client that will not sniff the
     # body has only this header to identify the container.
-    media_type = AUDIO_MEDIA_TYPES.get(Path(path).suffix.lower())
-    return FileResponse(path, media_type=media_type)
+    media_type = AUDIO_MEDIA_TYPES.get(served.suffix.lower())
+    return FileResponse(served, media_type=media_type)
 
 
 @router.get("/{song_id}/video")

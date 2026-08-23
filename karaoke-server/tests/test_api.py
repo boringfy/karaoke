@@ -107,6 +107,32 @@ def test_audio_media_types_cover_every_uploadable_extension():
     assert not AUDIO_EXTS - AUDIO_MEDIA_TYPES.keys()
 
 
+def test_only_undecodable_containers_are_transcoded_to_aac():
+    """?codec=aac must not re-encode a format the client can already open:
+    that would cost quality and CPU for nothing."""
+    from karaoke_server.api.songs import _NEEDS_AAC_TRANSCODE
+
+    assert ".opus" in _NEEDS_AAC_TRANSCODE
+    for playable in (".mp3", ".m4a", ".aac", ".flac", ".wav"):
+        assert playable not in _NEEDS_AAC_TRANSCODE
+
+
+async def test_codec_aac_is_opt_in(client):
+    """Without the parameter the response must be exactly as before."""
+    song_id = await _create_song(client)
+    await client.post(
+        f"/api/v1/songs/{song_id}/audio",
+        files={"file": ("song.wav", make_wav(), "audio/wav")},
+        data={"kind": "original"},
+    )
+    plain = await client.get(f"/api/v1/songs/{song_id}/audio?track=original")
+    # WAV is already playable, so asking for AAC must change nothing at all.
+    asked = await client.get(f"/api/v1/songs/{song_id}/audio?track=original&codec=aac")
+    assert plain.status_code == asked.status_code == 200
+    assert plain.content == asked.content
+    assert plain.headers["content-type"] == asked.headers["content-type"] == "audio/wav"
+
+
 def test_opus_is_labelled_ogg_not_audio_opus():
     """encode_opus() writes Ogg-encapsulated Opus. audio/opus means raw Opus
     packets, and mislabelling it that way makes iOS refuse the stream."""

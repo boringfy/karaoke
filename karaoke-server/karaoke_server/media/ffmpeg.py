@@ -39,6 +39,26 @@ def encode_opus(src: Path, dest: Path, bitrate: str = "128k") -> None:
     tmp.replace(dest)
 
 
+def encode_aac(src: Path, dest: Path, bitrate: str = "192k") -> None:
+    """Encode audio to AAC in MP4, for clients that cannot decode Opus.
+
+    +faststart moves the moov atom to the front of the file; without it a
+    progressively-downloaded MP4 cannot start playing until fully fetched.
+    """
+    tmp = dest.with_suffix(dest.suffix + ".tmp.m4a")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", str(src), "-vn",
+             "-c:a", "aac", "-b:a", bitrate, "-movflags", "+faststart", str(tmp)],
+            capture_output=True, text=True, timeout=900, check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        tmp.unlink(missing_ok=True)
+        raise FfmpegError(e.stderr.strip()[-500:]) from e
+    # Rename last: a reader can only ever see a complete file at `dest`.
+    tmp.replace(dest)
+
+
 # Audio codecs that stream-copy cleanly into a simple container (lossless, fast).
 _AUDIO_CODEC_EXT = {
     "flac": ".flac", "aac": ".m4a", "alac": ".m4a", "opus": ".opus",
