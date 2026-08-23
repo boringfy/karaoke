@@ -65,6 +65,54 @@ response must stay exactly as it is today. Web and Android decode Opus happily
 and must keep getting the original bytes — this is opt-in, for clients that
 cannot.
 
+## Acceptance tests
+
+Use a song whose tracks are Opus (e.g. `可愛くてごめん`,
+`06895e44f93c4dd889b0eb3602f0b75f`) and one already playable (`金曜日のおはよう`,
+`d539bca4c6104d91bf986ecac44df2ca`, original is m4a).
+
+As in requirement 1, read headers off a `GET` — `curl -I` sends HEAD and this
+route answers 405.
+
+```bash
+OPUS=06895e44f93c4dd889b0eb3602f0b75f
+M4A=d539bca4c6104d91bf986ecac44df2ca
+API=http://<server>:8787/api/v1/songs
+headers() { curl -s -o /dev/null -D - -r 0-1 "$1" | grep -i '^content-type'; }
+```
+
+1. **Opt-in only.** Without the parameter the response is untouched:
+   `headers "$API/$OPUS/audio?track=original"` → `audio/ogg`, and the body hash
+   matches what it was before the change.
+
+2. **Opus is transcoded.** `headers "$API/$OPUS/audio?track=original&codec=aac"`
+   → `audio/mp4`, and the body really is AAC:
+
+   ```bash
+   curl -s "$API/$OPUS/audio?track=original&codec=aac" -o /tmp/t.m4a
+   ffprobe -v error -show_entries stream=codec_name -of csv=p=0 /tmp/t.m4a   # aac
+   ```
+
+3. **Playable formats are NOT re-encoded.** `headers "$API/$M4A/audio?track=original&codec=aac"`
+   → `audio/mp4`, and the bytes are identical to the no-parameter response
+   (compare `shasum`). Re-encoding an m4a would lose quality for nothing.
+
+4. **Duration survives.** The transcode's duration matches the source within a
+   second — a wrong duration desynchronises the lyric wipe.
+
+5. **Range works on the transcode**, since seeking depends on it:
+   `curl -s -o /dev/null -D - -r 0-1023 "$API/$OPUS/audio?track=original&codec=aac"`
+   → `206` with a correct `Content-Range`.
+
+6. **Cached, not re-encoded per request.** Time the first and second calls; the
+   second should be immediate. Replacing the source audio must invalidate it.
+
+7. **Regression:** the Electron player and the Flutter client still play a song
+   and still seek. Neither sends `codec`, so neither should observe any change.
+
+8. **Device:** on the iPad (iOS 18), `可愛くてごめん` plays, and songs with one
+   Opus track regain the original ⇄ karaoke toggle.
+
 ## Alternative considered
 
 Configuring the pipeline to stop producing Opus (`instrumental_bitrate = ""`
