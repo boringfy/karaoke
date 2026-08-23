@@ -75,11 +75,22 @@ struct APIClient: Sendable {
             url: api.appendingPathComponent("songs/\(songId)/audio"),
             resolvingAgainstBaseURL: false)!
         // This URL carries no file extension, so AVFoundation identifies the
-        // container purely from the response's Content-Type. karaoke-server
-        // labels audio with its real container type as of "Label served audio
-        // with its real container type"; against a server older than that,
-        // every song fails to open. See BACKEND_REQUIREMENTS.md.
-        comps.queryItems = [URLQueryItem(name: "track", value: track)]
+        // container purely from the response's Content-Type; karaoke-server
+        // labels audio correctly as of "Label served audio with its real
+        // container type".
+        //
+        // Below iOS 26, AVFoundation cannot decode Ogg/Opus at all — measured
+        // on iOS 18.1.1 — and most instrumentals this server generates are
+        // Opus, so ask for an AAC rendition instead. iOS 26 plays Opus
+        // natively and skips the request, sparing the server a transcode. A
+        // server that does not implement `codec` ignores it and returns Opus,
+        // which is exactly the state that cannot play. See
+        // BACKEND_REQUIREMENTS.md, requirement 2.
+        var items = [URLQueryItem(name: "track", value: track)]
+        if #unavailable(iOS 26) {
+            items.append(URLQueryItem(name: "codec", value: "aac"))
+        }
+        comps.queryItems = items
         return comps.url!
     }
 

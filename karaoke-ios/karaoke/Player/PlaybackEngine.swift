@@ -125,7 +125,7 @@ final class PlaybackEngine {
         }
         guard hasMedia else {
             isLoading = false
-            loadError = "This iPad can't play this song's audio format."
+            loadError = Self.unplayableMessage
             return
         }
         if track == .instrumental && !hasInstrumental { track = .original }
@@ -157,6 +157,17 @@ final class PlaybackEngine {
         isLoading = false
         if !hasMedia { loadError = "nothing to play" }
     }
+
+    /// iOS 26 decodes Ogg/Opus; iOS 18 does not, and most instrumentals this
+    /// server generates are Opus. Say so, rather than leaving the singer
+    /// guessing at "unsupported format".
+    static let unplayableMessage: String = {
+        if #available(iOS 26, *) {
+            return "This song's audio format can't be played on this iPad."
+        }
+        return "This song is stored in Opus, which iOS \(ProcessInfo.processInfo.operatingSystemVersion.majorVersion) can't decode. "
+            + "The server needs to offer it as AAC, or this iPad needs iPadOS 26."
+    }()
 
     /// Polls `status` — simpler than KVO and the wait is bounded.
     private static func waitUntilReady(_ player: AVPlayer, timeout: Double = 20) async -> Bool {

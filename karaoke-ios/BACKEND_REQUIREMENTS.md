@@ -1,4 +1,80 @@
-# Backend requirement: label served audio with its real container type
+# Backend requirements for the iPadOS client
+
+Two requirements, in the order they were found. The first is **implemented**;
+the second is **open and blocking**, and it reverses a "non-goal" this document
+previously stated. Read requirement 2 before acting on the non-goal in
+requirement 1.
+
+---
+
+# Requirement 2 (OPEN, BLOCKING): offer Opus audio as AAC
+
+**Status:** ❌ open — 20 of 37 songs cannot be played on the test iPad.
+**Component:** `karaoke-server` — `karaoke_server/api/songs.py::stream_audio`
+
+## The correction
+
+Requirement 1 below says, in bold, *"do not add a transcoding path"*, on the
+grounds that iOS decodes Opus once the header is right. **That is true only on
+iOS 26.** It was measured on an iOS 26 simulator and wrongly generalised to
+"iOS". Measured on the actual test device:
+
+```
+os = Version 18.1.1 (Build 22B91)      iPad Pro 13-inch (M4)
+opus/ogg  | FAILED  Cannot Open
+mp3       | READY   253.8
+flac      | READY   344.6
+m4a/aac   | READY   242.0
+```
+
+AVFoundation on iOS 18 cannot decode Ogg/Opus at all. The header fix in
+requirement 1 was still necessary and correct — it is what makes mp3, flac and
+m4a work — but it is not sufficient.
+
+## Impact
+
+`encode_opus()` is the default for generated instrumentals, so Opus dominates
+the library. Of 37 songs, by served content type:
+
+| | songs |
+| --- | --- |
+| both tracks Opus → **will not play at all** | 20 |
+| one track Opus → plays, but no karaoke toggle | 16 |
+| neither track Opus → fully fine | 1 |
+
+## What is needed
+
+`GET /api/v1/songs/{id}/audio` should be able to return AAC-in-MP4 for a client
+that asks, e.g. `?codec=aac`:
+
+- If the stored file is already playable as-is (mp3, flac, m4a/aac), serve it
+  unchanged — do not re-encode.
+- If it is Opus, serve an AAC/MP4 transcode. Transcode once and cache it beside
+  the source (`instrumental.aac.m4a`), keyed so a replaced source invalidates it
+  (mtime or the sha the pipeline already computes); later requests serve the
+  cached file so `Range` and seeking keep working.
+- `ffmpeg -i in.opus -vn -c:a aac -b:a 192k -movflags +faststart out.m4a`.
+  `+faststart` matters: it moves the moov atom to the front for progressive
+  HTTP playback.
+- Write to a temp file and rename, so two concurrent requests cannot serve a
+  half-written file.
+- Content type `audio/mp4`, per requirement 1.
+
+**Backward compatibility, same rule as before:** without `?codec=aac` the
+response must stay exactly as it is today. Web and Android decode Opus happily
+and must keep getting the original bytes — this is opt-in, for clients that
+cannot.
+
+## Alternative considered
+
+Configuring the pipeline to stop producing Opus (`instrumental_bitrate = ""`
+keeps WAV) fixes new songs only, leaves the existing 36 broken, and WAV is
+several times the size over the LAN. Transcode-on-demand with a cache handles
+the existing library and costs one encode per song, once.
+
+---
+
+# Requirement 1 (IMPLEMENTED): label served audio with its real container type
 
 **Status:** ✅ **implemented** in karaoke-server, commit *"Label served audio
 with its real container type"* (2026-08-23), and verified from the iPad against
