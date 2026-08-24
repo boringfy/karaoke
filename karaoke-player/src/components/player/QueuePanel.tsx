@@ -2,16 +2,21 @@ import { useState } from 'react'
 import { playSongById } from '../../player/usePlaybackEngine'
 import { useQueueStore } from '../../stores/queueStore'
 
-export function QueuePanel() {
+interface Props {
+  /** 'overlay' floats over the video; 'inline' sits in the library header and
+   * drops its list down like the other header popovers. */
+  variant?: 'overlay' | 'inline'
+}
+
+export function QueuePanel({ variant = 'overlay' }: Props) {
   const queue = useQueueStore((s) => s.queue)
-  const currentIndex = useQueueStore((s) => s.currentIndex)
+  const takeAt = useQueueStore((s) => s.takeAt)
   const removeAt = useQueueStore((s) => s.removeAt)
   const clear = useQueueStore((s) => s.clear)
-  const setCurrentIndex = useQueueStore((s) => s.setCurrentIndex)
   const [open, setOpen] = useState(false)
 
   return (
-    <div className={`queue-panel ${open ? 'queue-panel--open' : ''}`}>
+    <div className={`queue-panel queue-panel--${variant} ${open ? 'queue-panel--open' : ''}`}>
       <button className="queue-toggle" onClick={() => setOpen(!open)}>
         Queue ({queue.length})
       </button>
@@ -19,12 +24,15 @@ export function QueuePanel() {
         <div className="queue-list">
           {queue.length === 0 ? <div className="queue-empty">Queue is empty</div> : null}
           {queue.map((item, i) => (
-            <div key={`${item.songId}-${i}`} className={`queue-item ${i === currentIndex ? 'queue-item--current' : ''}`}>
+            <div key={`${item.songId}-${i}`} className="queue-item">
               <button
                 className="queue-item-main"
+                title="Sing this now"
                 onClick={() => {
-                  setCurrentIndex(i)
-                  void playSongById(item.songId)
+                  // Reaching the stage takes it off the waiting list; the ones
+                  // it jumped ahead of keep their places.
+                  const taken = takeAt(i)
+                  if (taken) void playSongById(taken.songId)
                 }}
               >
                 <span className="queue-item-title">{item.title}</span>

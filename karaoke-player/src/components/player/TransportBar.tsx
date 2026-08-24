@@ -13,11 +13,10 @@ export function TransportBar() {
   const offsetMs = usePlayerStore((s) => s.subtitle?.offset_ms ?? null)
   const volume = usePlayerStore((s) => s.volume)
   const queueLen = useQueueStore((s) => s.queue.length)
-  const queueIdx = useQueueStore((s) => s.currentIndex)
 
   if (!song) return null
   const canToggle = song.has_original && song.has_instrumental
-  const hasNext = queueIdx + 1 < queueLen
+  const hasNext = queueLen > 0
 
   return (
     <div className="transport">

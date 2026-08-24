@@ -158,8 +158,8 @@ export function remoteUiHtml(): string {
     var q=$('queue')
     if(!s.queue.length){q.innerHTML='<li class="muted">Queue is empty</li>';return}
     q.innerHTML=s.queue.map(function(it,i){
-      return '<li class="'+(i===s.currentIndex?'current':'')+'">'+
-        '<span class="idx">'+(i===s.currentIndex?'▶':(i+1))+'</span>'+
+      return '<li>'+
+        '<span class="idx">'+(i+1)+'</span>'+
         '<span class="grow" style="min-width:0">'+
           '<div class="t ellipsis">'+esc(it.title)+'</div>'+
           '<div class="a ellipsis">'+esc(it.artist||'')+'</div>'+

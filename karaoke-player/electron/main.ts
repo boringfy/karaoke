@@ -97,7 +97,7 @@ async function createWindow() {
 
 /** Latest state published by the renderer; served to remotes that connect
  * before the renderer has pushed an update. */
-let remoteState: RemoteState = { playing: null, status: 'idle', queue: [], currentIndex: -1 }
+let remoteState: RemoteState = { playing: null, status: 'idle', queue: [] }
 let remote: RemoteServerHandle | null = null
 /** karaoke-server base URL, published by the renderer so it cannot drift from
  * the constant the renderer itself uses. */

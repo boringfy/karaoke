@@ -24,12 +24,11 @@ interface RemoteCommand {
 
 function snapshot() {
   const { song, status } = usePlayerStore.getState()
-  const { queue, currentIndex } = useQueueStore.getState()
+  const { queue } = useQueueStore.getState()
   return {
     playing: song ? { id: song.id, title: song.title, artist: song.artist } : null,
     status,
     queue: queue.map((q) => ({ songId: q.songId, title: q.title, artist: q.artist })),
-    currentIndex,
   }
 }
 

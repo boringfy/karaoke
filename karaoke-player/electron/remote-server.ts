@@ -18,7 +18,6 @@ export interface RemoteState {
   playing: { id: string; title: string; artist: string | null } | null
   status: string
   queue: { songId: string; title: string; artist: string | null }[]
-  currentIndex: number
 }
 
 export type RemoteCommand =

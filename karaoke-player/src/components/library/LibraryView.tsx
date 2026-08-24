@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Song } from '../../api/types'
 import { PAGE_SIZE, useLibraryStore } from '../../stores/libraryStore'
 import { useUiStore } from '../../stores/uiStore'
+import { QueuePanel } from '../player/QueuePanel'
 import { EditSongDialog } from './EditSongDialog'
 import { RemoteControlCard } from './RemoteControlCard'
 import { SearchBar } from './SearchBar'
@@ -25,6 +26,7 @@ export function LibraryView() {
         <h1>Karaoke Library</h1>
         <div className="library-header-actions">
           <SearchBar />
+          <QueuePanel variant="inline" />
           <RemoteControlCard />
           <button className="primary" onClick={() => openWizard('new')}>
             + Add song

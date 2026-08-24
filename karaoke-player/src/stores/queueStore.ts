@@ -6,15 +6,19 @@ export interface QueueItem {
   artist: string | null
 }
 
+/**
+ * The queue is a waiting list, not a history: a song leaves it the moment it
+ * goes on stage, so the list is exactly who is still waiting. That is why
+ * there is no pointer into it — the song being sung is playerStore's business.
+ */
 interface QueueState {
   queue: QueueItem[]
-  /** Index of the currently playing item, -1 when nothing from the queue is playing. */
-  currentIndex: number
   add: (item: QueueItem) => void
   removeAt: (index: number) => void
   clear: () => void
-  setCurrentIndex: (index: number) => void
-  /** Advance and return the next item, or null when exhausted. */
+  /** Take one item off the list so it can go on stage; null if the index is stale. */
+  takeAt: (index: number) => QueueItem | null
+  /** Take the item at the front, or null when nobody is left waiting. */
   next: () => QueueItem | null
 }
 
@@ -61,7 +65,6 @@ function persist(queue: QueueItem[]) {
 
 export const useQueueStore = create<QueueState>((set, get) => ({
   queue: [],
-  currentIndex: -1,
 
   add: (item) => {
     const queue = [...get().queue, item]
@@ -70,30 +73,27 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   },
 
   removeAt: (index) => {
-    const { queue, currentIndex } = get()
-    const next = queue.filter((_, i) => i !== index)
-    set({
-      queue: next,
-      currentIndex:
-        index < currentIndex ? currentIndex - 1 : index === currentIndex ? -1 : currentIndex,
-    })
-    persist(next)
+    const queue = get().queue.filter((_, i) => i !== index)
+    set({ queue })
+    persist(queue)
   },
 
   clear: () => {
-    set({ queue: [], currentIndex: -1 })
+    set({ queue: [] })
     persist([])
   },
 
-  setCurrentIndex: (currentIndex) => set({ currentIndex }),
-
-  next: () => {
-    const { queue, currentIndex } = get()
-    const nextIndex = currentIndex + 1
-    if (nextIndex >= queue.length) return null
-    set({ currentIndex: nextIndex })
-    return queue[nextIndex]
+  takeAt: (index) => {
+    const { queue } = get()
+    const item = queue[index]
+    if (!item) return null
+    const rest = queue.filter((_, i) => i !== index)
+    set({ queue: rest })
+    persist(rest)
+    return item
   },
+
+  next: () => get().takeAt(0),
 }))
 
 void loadPersisted().then((queue) => {

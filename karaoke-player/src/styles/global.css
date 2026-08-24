@@ -492,14 +492,31 @@ select:focus {
 }
 
 .queue-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+/* Over the video: floats in the top-right corner, list pushed down in flow. */
+.queue-panel--overlay {
   position: absolute;
   top: 16px;
   right: 16px;
   z-index: 60;
   width: 280px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+}
+/* In the library header: sits in the button row, list drops down over the
+   table like the remote-control popover next to it. */
+.queue-panel--inline {
+  position: relative;
+}
+.queue-panel--inline .queue-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: 320px;
+  background: var(--panel, #1a1d25);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 .queue-toggle {
   background: rgba(15, 17, 21, 0.7);
@@ -533,9 +550,6 @@ select:focus {
   border: none;
   padding: 6px 8px;
   text-align: left;
-}
-.queue-item--current .queue-item-title {
-  color: var(--accent);
 }
 .queue-item-title {
   font-weight: 600;
