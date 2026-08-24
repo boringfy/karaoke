@@ -90,8 +90,6 @@ export function PlayerView() {
       {song?.embedded_lyrics ? null : <SubtitleOverlay />}
       {status === 'loading' ? <div className="player-status">Loading…</div> : null}
       {status === 'error' && error ? <div className="player-status player-status--error">{error}</div> : null}
-      {status === 'ended' && !song ? <div className="player-status">Queue finished</div> : null}
-      {status === 'ended' && song ? <div className="player-status">Queue finished 🎤</div> : null}
       <button className="player-back" onClick={() => setView('library')}>
         ‹ Library
       </button>

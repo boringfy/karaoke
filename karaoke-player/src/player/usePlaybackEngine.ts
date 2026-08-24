@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { getSong, getSubtitle } from '../api/songs'
 import type { Song } from '../api/types'
+import { leaveFullscreen } from './fullscreen'
 import { engine } from './PlaybackEngine'
 import { usePlayerStore } from '../stores/playerStore'
 import { useQueueStore } from '../stores/queueStore'
@@ -79,6 +80,8 @@ export function stopPlayback(): void {
     coarseTime: 0,
     error: null,
   })
+  // Never strand the room in a fullscreen window showing the library.
+  void leaveFullscreen()
   useUiStore.getState().setView('library')
 }
 
@@ -98,12 +101,23 @@ export async function playSongById(songId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Nobody is left waiting, so the show is over: tear the player down and hand
+ * the screen back to the library instead of parking the room on a dead frame.
+ * The toast is what tells them why the view changed under them.
+ */
+function finishQueue(): void {
+  const wasLoaded = usePlayerStore.getState().song !== null
+  stopPlayback()
+  if (wasLoaded) useUiStore.getState().toast('Queue finished \u{1F3A4}')
+}
+
 export async function playNextInQueue(): Promise<void> {
   // Skip over items that are missing or not ready.
   for (;;) {
     const item = useQueueStore.getState().next()
     if (!item) {
-      usePlayerStore.setState({ status: 'ended' })
+      finishQueue()
       return
     }
     if (await playSongById(item.songId)) return
