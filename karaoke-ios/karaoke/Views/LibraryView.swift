@@ -183,6 +183,7 @@ struct LibraryView: View {
             Spacer(minLength: 0)
             Text("LENGTH").frame(width: 64, alignment: .trailing)
             Text("STATUS").frame(width: 96, alignment: .trailing)
+            Color.clear.frame(width: 84, height: 1)   // actions column
         }
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(Theme.textDim)
@@ -240,16 +241,15 @@ struct SongRow: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                if song.artist?.isEmpty == false {
-                    // The singer's name doubles as a filter, as on the desktop.
-                    Button(action: filterArtist) {
-                        Text(song.displayArtist)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.textDim)
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.plain)
-                }
+                // Plain text, not a button: the desktop can afford a clickable
+                // singer because a mouse aims precisely, but on a touch row the
+                // whole point of tapping is "sing this", and a filter trigger
+                // sitting inside the tap target only fires by accident.
+                // Filtering lives in the long-press menu instead.
+                Text(song.displayArtist)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textDim)
+                    .lineLimit(1)
             }
             Spacer(minLength: 0)
             if song.hasVideo {
@@ -262,6 +262,13 @@ struct SongRow: View {
                 .foregroundStyle(Theme.textDim)
                 .frame(width: 64, alignment: .trailing)
             StatusBadge(status: song.status).frame(width: 96, alignment: .trailing)
+            // An explicit target to sing this one, so starting a song is a
+            // deliberate press rather than a tap anywhere on the row.
+            HStack(spacing: 6) {
+                rowButton("play.fill", "Play \(song.displayTitle)", action: play)
+                rowButton("text.append", "Queue \(song.displayTitle)", action: enqueue)
+            }
+            .frame(width: 84, alignment: .trailing)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 10)
@@ -276,6 +283,20 @@ struct SongRow: View {
                 Button("Only this singer", systemImage: "person", action: filterArtist)
             }
         }
+    }
+
+    private func rowButton(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text)
+                .frame(width: 36, height: 28)
+                .background(Theme.bgRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private var cover: some View {
