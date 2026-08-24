@@ -11,7 +11,11 @@ struct VideoLayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> PlayerLayerView {
         let view = PlayerLayerView()
         view.backgroundColor = .black
-        view.playerLayer.videoGravity = .resizeAspectFill
+        // Fit the whole frame, never crop: a 16:9 MV on a 4:3 iPad loses a
+        // sixth of its width to .resizeAspectFill, and burned-in lyrics or a
+        // singer at the edge go with it. The desktop player does the same
+        // (object-fit: contain).
+        view.playerLayer.videoGravity = .resizeAspect
         view.playerLayer.player = player
         return view
     }
