@@ -10,9 +10,11 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import get_settings
 from ..db import session as db_session
 from ..db.models import AUTO_STAGES, REALIGN_STAGES, Job, Song, SongStatus, Stage
 from ..db.session import get_session
+from ..lyrics import translate
 from ..media import ffmpeg, storage
 from ..pipeline.worker import enqueue_stages
 from ..subtitles import exporters, render
@@ -24,6 +26,7 @@ from .schemas import (
     SongOut,
     SongUpdate,
     SubtitleOffset,
+    SubtitleTranslations,
     UploadResult,
 )
 
@@ -511,6 +514,84 @@ async def set_subtitle_offset(
     render.write_exports(song, doc)
     await session.commit()
     return SubtitleOffset(offset_ms=doc.offset_ms)
+
+
+@router.put("/{song_id}/subtitle/translations", response_model=MessageOut)
+async def set_subtitle_translations(
+    song_id: str,
+    body: SubtitleTranslations,
+    session: AsyncSession = Depends(get_session),
+):
+    """Attach a translation to each subtitle line.
+
+    Positional: entry *i* belongs to line *i*, so the caller must send exactly
+    as many entries as the song has lines. Mismatched lengths are rejected
+    rather than silently truncated — a shifted translation is worse than none,
+    since every line would then be captioned with its neighbour's meaning.
+
+    Timing is untouched: translations ride along with the line they belong to
+    and are never independently highlighted.
+    """
+    song = await _get_song(song_id, session)
+    if not song.subtitle_json_path or not Path(song.subtitle_json_path).exists():
+        raise HTTPException(404, "subtitle not generated yet")
+    path = Path(song.subtitle_json_path)
+    doc = SubtitleDoc.load_json(path.read_text(encoding="utf-8"))
+    if len(body.lines) != len(doc.lines):
+        raise HTTPException(
+            422,
+            f"expected {len(doc.lines)} entries to match the subtitle's lines, "
+            f"got {len(body.lines)}",
+        )
+    filled = 0
+    for line, text in zip(doc.lines, body.lines, strict=True):
+        value = (text or "").strip() or None
+        line.translation = value
+        filled += value is not None
+    storage.atomic_write_text(path, doc.dump_json())
+    await session.commit()
+    return MessageOut(detail=f"translations set on {filled} of {len(doc.lines)} lines")
+
+
+@router.post("/{song_id}/subtitle/translate", response_model=MessageOut, status_code=200)
+async def translate_subtitle(
+    song_id: str,
+    target: str | None = Query(default=None, description="Target language."),
+    force: bool = Query(default=False, description="Retranslate lines that already have one."),
+    session: AsyncSession = Depends(get_session),
+):
+    """Fill in translations using the configured local model.
+
+    Runs against a chat endpoint on the host, so nothing leaves the machine.
+    Deliberately not part of the automatic pipeline: it costs GPU time that
+    the alignment stages may be competing for.
+    """
+    song = await _get_song(song_id, session)
+    if not song.subtitle_json_path or not Path(song.subtitle_json_path).exists():
+        raise HTTPException(404, "subtitle not generated yet")
+    path = Path(song.subtitle_json_path)
+    doc = SubtitleDoc.load_json(path.read_text(encoding="utf-8"))
+
+    todo = [i for i, ln in enumerate(doc.lines) if force or not ln.translation]
+    if not todo:
+        return MessageOut(detail="every line already has a translation")
+
+    settings = get_settings()
+    results = await translate.translate_lines(
+        [doc.lines[i].text for i in todo],
+        url=settings.translate_url,
+        model=settings.translate_model,
+        target=target or settings.translate_target,
+    )
+    filled = 0
+    for i, text in zip(todo, results, strict=True):
+        value = (text or "").strip() or None
+        if value:
+            doc.lines[i].translation = value
+            filled += 1
+    storage.atomic_write_text(path, doc.dump_json())
+    await session.commit()
+    return MessageOut(detail=f"translated {filled} of {len(todo)} lines")
 
 
 # ------------------------------------------------------------------ processing

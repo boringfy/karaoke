@@ -111,3 +111,13 @@ class SubtitleOffset(BaseModel):
     """Global lyric timing shift; positive = subtitles appear later."""
 
     offset_ms: int = Field(ge=-60_000, le=60_000)
+
+
+class SubtitleTranslations(BaseModel):
+    """Per-line translations, positional: one entry per subtitle line.
+
+    A null or empty entry clears that line's translation, so a partial
+    translation can be supplied without inventing text for every line.
+    """
+
+    lines: list[str | None]

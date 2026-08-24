@@ -31,6 +31,11 @@ services:
     ports:
       - "8787:8787"
 
+    # Lyric translation calls a model on the host. Inside the container
+    # 127.0.0.1 is the container, so reach the host through this alias.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     # Match the host owner of /nvmex2/karaoke/data so nothing is root-owned.
     user: "1000:1000"
 

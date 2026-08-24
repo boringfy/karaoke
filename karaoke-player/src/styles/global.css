@@ -854,13 +854,20 @@ select:focus {
   font-size: 0.45em;
   font-weight: 600;
 }
+/* Sits above the lyric it belongs to, at roughly a third of its size, so it
+   reads as a gloss rather than competing with the line being sung. Plain white
+   with a halo: no karaoke fill, because it has no timing of its own. */
 .subtitle-translation {
-  font-size: 18px;
+  font-size: 0.36em;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.85);
-  margin-top: 4px;
+  color: #fff;
+  margin-bottom: 0.14em;
+  line-height: 1.25;
   -webkit-text-stroke: 0;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 6px rgba(0, 0, 0, 0.9);
+  text-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.95),
+    0 0 6px rgba(0, 0, 0, 0.9),
+    0 0 14px rgba(0, 0, 0, 0.75);
 }
 
 /* ---------- Server unreachable ---------- */

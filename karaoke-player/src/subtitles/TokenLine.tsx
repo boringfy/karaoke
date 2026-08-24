@@ -40,6 +40,9 @@ export const TokenLine = forwardRef<HTMLDivElement, Props>(function TokenLine(
 ) {
   return (
     <div className={`subtitle-line subtitle-line--${variant}`} ref={ref}>
+      {/* Above the lyric, and deliberately outside the token machinery: the
+          translation carries no timing, so it must never sweep or highlight. */}
+      {line.translation ? <div className="subtitle-translation">{line.translation}</div> : null}
       {line.tokens.map((tok, i) => (
         <Fragment key={i}>
           {i > 0 && spaceBetween(line.tokens[i - 1].text, tok.text) ? ' ' : null}
@@ -51,7 +54,6 @@ export const TokenLine = forwardRef<HTMLDivElement, Props>(function TokenLine(
           </span>
         </Fragment>
       ))}
-      {line.translation ? <div className="subtitle-translation">{line.translation}</div> : null}
     </div>
   )
 })

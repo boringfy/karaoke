@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     # Device for ML stages: "auto" picks cuda > mps > cpu.
     device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
 
+    # Optional lyric translation, via an OpenAI-compatible chat endpoint on the
+    # host (llama.cpp / vLLM / Ollama). Opt-in per song, never part of the
+    # automatic pipeline. Inside Docker, 127.0.0.1 is the container, so the
+    # default reaches the host through the compose extra_hosts alias.
+    translate_url: str = "http://host.docker.internal:11434/v1/chat/completions"
+    translate_model: str = "local"
+    translate_target: str = "English"
+
     # Abandon a pipeline stage that has run this long. Guards against a stage
     # wedging on a hung network call or model load and blocking the queue
     # forever. Generous: separation/alignment scale with track length.
