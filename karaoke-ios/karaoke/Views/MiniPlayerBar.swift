@@ -1,54 +1,60 @@
 import SwiftUI
 
-/// Leaving the player keeps the song going; this bar sits under the library so
-/// the next singer can queue up without stopping the current one.
+/// The desktop's floating mini-player: a 60pt bar over the library showing the
+/// live lyric line, with transport on the right. Leaving the player keeps the
+/// song going, so the next singer can queue up.
 struct MiniPlayerBar: View {
     @Environment(PlayerSession.self) private var session
 
     var body: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(session.current?.displayTitle ?? "")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textDim)
                     .lineLimit(1)
                 // Live lyrics, at a rate that costs nothing next to the
                 // per-frame wipe in the full player.
                 TimelineView(.periodic(from: .now, by: 0.1)) { _ in
                     Text(currentLine ?? session.current?.displayArtist ?? "")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(Theme.text)
                         .lineLimit(1)
                 }
             }
-            Spacer(minLength: 0)
-            Button {
+            Spacer(minLength: 8)
+            control(session.engine.isPlaying ? "pause.fill" : "play.fill") {
                 session.engine.togglePlay()
-            } label: {
-                Image(systemName: session.engine.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title3)
             }
-            Button {
-                session.advance()
-            } label: {
-                Image(systemName: "forward.end.fill")
-            }
-            .disabled(session.queue.isEmpty)
-            Button {
-                session.stop()
-            } label: {
-                Image(systemName: "stop.fill")
-            }
-            Button {
-                session.isPresentingPlayer = true
-            } label: {
-                Image(systemName: "chevron.up.circle.fill")
-                    .font(.title2)
-            }
+            control("forward.end.fill") { session.advance() }
+                .disabled(session.queue.isEmpty)
+                .opacity(session.queue.isEmpty ? 0.45 : 1)
+            control("stop.fill") { session.stop() }
+            control("chevron.up") { session.isPresentingPlayer = true }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
+        .padding(.horizontal, 12)
+        .frame(height: 60)
+        .frame(maxWidth: 920)
+        .background(Theme.bgRaised.opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border, lineWidth: 1))
+        .shadow(color: .black.opacity(0.5), radius: 15, y: 8)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+        .contentShape(Rectangle())
+        .onTapGesture { session.isPresentingPlayer = true }
+    }
+
+    private func control(_ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.text)
+                .frame(width: 34, height: 30)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
     }
 
     private var currentLine: String? {
@@ -68,39 +74,36 @@ struct QueueSheet: View {
         NavigationStack {
             List {
                 if let current = session.current {
-                    Section("Now singing") {
-                        SongRow(song: current)
-                    }
+                    Section("Now singing") { SongRowCompact(song: current) }
                 }
                 Section("Up next") {
                     if session.queue.isEmpty {
                         Text("Nothing queued — long-press a song to add it.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Theme.textDim)
                     }
-                    ForEach(session.queue) { song in
-                        SongRow(song: song)
-                    }
-                    .onDelete { session.remove(at: $0) }
-                    .onMove { session.move(from: $0, to: $1) }
+                    ForEach(session.queue) { song in SongRowCompact(song: song) }
+                        .onDelete { session.remove(at: $0) }
+                        .onMove { session.move(from: $0, to: $1) }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.bg)
             .navigationTitle("Queue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { EditButton() }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
             }
         }
+        .preferredColorScheme(.dark)
     }
 
-    private struct SongRow: View {
+    private struct SongRowCompact: View {
         let song: Song
         var body: some View {
             VStack(alignment: .leading, spacing: 2) {
-                Text(song.displayTitle).font(.body)
-                Text(song.displayArtist).font(.caption).foregroundStyle(.secondary)
+                Text(song.displayTitle).font(.system(size: 14, weight: .semibold))
+                Text(song.displayArtist).font(.system(size: 12)).foregroundStyle(Theme.textDim)
             }
         }
     }
@@ -119,7 +122,7 @@ struct SettingsSheet: View {
             Form {
                 Section("Server address") {
                     TextField("192.168.1.50:8787", text: $address)
-                        .font(.body.monospaced())
+                        .font(.system(size: 14).monospaced())
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -128,7 +131,7 @@ struct SettingsSheet: View {
                             reachable ? "Server is reachable" : "No answer from that address",
                             systemImage: reachable ? "checkmark.circle.fill" : "xmark.circle.fill"
                         )
-                        .foregroundStyle(reachable ? .green : .red)
+                        .foregroundStyle(reachable ? Theme.ok : Theme.danger)
                     }
                     Button("Test connection") {
                         Task {
@@ -148,12 +151,12 @@ struct SettingsSheet: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.bg)
             .navigationTitle("Server")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
-                }
+                ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") {
                         config.setServerBase(address)
@@ -164,5 +167,6 @@ struct SettingsSheet: View {
             }
             .onAppear { address = config.serverBase }
         }
+        .preferredColorScheme(.dark)
     }
 }

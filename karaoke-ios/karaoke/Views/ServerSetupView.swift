@@ -59,6 +59,8 @@ struct ServerSetupView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+        .preferredColorScheme(.dark)
         .onAppear { addressFocused = true }
     }
 
