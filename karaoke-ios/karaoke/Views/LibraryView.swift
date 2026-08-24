@@ -53,9 +53,10 @@ struct LibraryView: View {
                 .foregroundStyle(Theme.text)
             Spacer(minLength: 0)
             searchField
-            toolbarButton("list.bullet", label: session.queue.isEmpty ? nil : "\(session.queue.count)") {
-                showQueue = true
-            }
+            toolbarButton(
+                "list.bullet",
+                label: session.queue.isEmpty ? "Queue" : "Queue (\(session.queue.count))"
+            ) { showQueue = true }
             toolbarButton("gearshape", label: nil) { showSettings = true }
         }
     }
@@ -183,7 +184,7 @@ struct LibraryView: View {
             Spacer(minLength: 0)
             Text("LENGTH").frame(width: 64, alignment: .trailing)
             Text("STATUS").frame(width: 96, alignment: .trailing)
-            Color.clear.frame(width: 84, height: 1)   // actions column
+            Color.clear.frame(width: 184, height: 1)   // actions column
         }
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(Theme.textDim)
@@ -265,10 +266,10 @@ struct SongRow: View {
             // An explicit target to sing this one, so starting a song is a
             // deliberate press rather than a tap anywhere on the row.
             HStack(spacing: 6) {
-                rowButton("play.fill", "Play \(song.displayTitle)", action: play)
-                rowButton("text.append", "Queue \(song.displayTitle)", action: enqueue)
+                rowButton("play.fill", "Play", accessibility: "Play \(song.displayTitle)", action: play)
+                rowButton("text.append", "Queue", accessibility: "Queue \(song.displayTitle)", action: enqueue)
             }
-            .frame(width: 84, alignment: .trailing)
+            .frame(width: 184, alignment: .trailing)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 10)
@@ -285,18 +286,27 @@ struct SongRow: View {
         }
     }
 
-    private func rowButton(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+    /// Icon and word together: an icon alone leaves "play now" and "add to the
+    /// queue" looking like two shades of the same thing, and a bare glyph is a
+    /// small target for a thumb.
+    private func rowButton(
+        _ symbol: String, _ label: String, accessibility: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.text)
-                .frame(width: 36, height: 28)
-                .background(Theme.bgRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+            HStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 11))
+                Text(label).font(.system(size: 13, weight: .medium))
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(Theme.bgRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel(accessibility)
     }
 
     private var cover: some View {

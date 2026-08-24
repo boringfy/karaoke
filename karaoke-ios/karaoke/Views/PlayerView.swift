@@ -14,6 +14,7 @@ struct PlayerView: View {
     @State private var position: Double = 0
     @State private var scrub: Double?
     @State private var chromeVisible = true
+    @State private var showQueue = false
     @State private var hideTask: Task<Void, Never>?
 
     private let tick = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
@@ -55,6 +56,7 @@ struct PlayerView: View {
             .animation(.easeInOut(duration: 0.22), value: chromeVisible)
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showQueue) { QueueSheet() }
         .persistentSystemOverlays(chromeVisible ? .automatic : .hidden)
         .contentShape(Rectangle())
         .onTapGesture { showChrome() }
@@ -115,20 +117,33 @@ struct PlayerView: View {
                     .clipShape(Capsule())
             }
             Spacer()
-            if !session.queue.isEmpty {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("UP NEXT")
-                        .font(.system(size: 10)).tracking(0.5)
-                        .foregroundStyle(Theme.textDim)
-                    Text(session.queue[0].displayTitle)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
+            VStack(alignment: .trailing, spacing: 6) {
+                Button {
+                    showQueue = true
+                    showChrome()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "list.bullet")
+                        Text("Queue (\(session.queue.count))")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.black.opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .buttonStyle(.plain)
+                if let next = session.upNext {
+                    Text("Next: \(next.displayTitle)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textDim)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.5))
+                        .clipShape(Capsule())
+                }
             }
         }
         .padding(.horizontal, 24)
@@ -192,8 +207,8 @@ struct PlayerView: View {
                     .buttonStyle(.plain)
                     button("goforward.10", "Forward 10 seconds") { engine.seekBy(10) }
                     button("forward.end.fill", "Next in queue") { session.advance() }
-                        .disabled(session.queue.isEmpty)
-                        .opacity(session.queue.isEmpty ? 0.45 : 1)
+                        .disabled(!session.hasNext)
+                        .opacity(session.hasNext ? 1 : 0.45)
                 }
 
                 HStack(spacing: 10) {

@@ -27,8 +27,8 @@ struct MiniPlayerBar: View {
                 session.engine.togglePlay()
             }
             control("forward.end.fill") { session.advance() }
-                .disabled(session.queue.isEmpty)
-                .opacity(session.queue.isEmpty ? 0.45 : 1)
+                .disabled(!session.hasNext)
+                .opacity(session.hasNext ? 1 : 0.45)
             control("stop.fill") { session.stop() }
             control("chevron.up") { session.isPresentingPlayer = true }
         }
@@ -65,7 +65,9 @@ struct MiniPlayerBar: View {
     }
 }
 
-/// The sing-along queue: reorder it, drop songs from it, or jump ahead.
+/// The sing-along queue, as on the desktop: the whole list stays visible with
+/// the song on stage marked, so everyone can see what has been sung and what is
+/// coming. Tap to jump, swipe to remove, drag to reorder.
 struct QueueSheet: View {
     @Environment(PlayerSession.self) private var session
     @Environment(\.dismiss) private var dismiss
@@ -73,17 +75,41 @@ struct QueueSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if let current = session.current {
-                    Section("Now singing") { SongRowCompact(song: current) }
-                }
-                Section("Up next") {
-                    if session.queue.isEmpty {
-                        Text("Nothing queued — long-press a song to add it.")
+                if session.queue.isEmpty {
+                    Section {
+                        Text("Nothing queued yet — use the ≡ button on a song to add it.")
                             .foregroundStyle(Theme.textDim)
                     }
-                    ForEach(session.queue) { song in SongRowCompact(song: song) }
-                        .onDelete { session.remove(at: $0) }
-                        .onMove { session.move(from: $0, to: $1) }
+                }
+                ForEach(Array(session.queue.enumerated()), id: \.element.id) { index, song in
+                    Button {
+                        session.playFromQueue(at: index)
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 10) {
+                            marker(for: index)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(song.displayTitle)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(index == session.currentIndex ? Theme.accent : Theme.text)
+                                Text(song.displayArtist)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(index == session.currentIndex ? Theme.bgHover : Theme.bgRaised)
+                }
+                .onDelete { session.remove(at: $0) }
+                .onMove { session.move(from: $0, to: $1) }
+
+                if !session.queue.isEmpty {
+                    Section {
+                        Button("Clear queue", role: .destructive) { session.clearQueue() }
+                    }
+                    .listRowBackground(Theme.bgRaised)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -98,13 +124,25 @@ struct QueueSheet: View {
         .preferredColorScheme(.dark)
     }
 
-    private struct SongRowCompact: View {
-        let song: Song
-        var body: some View {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(song.displayTitle).font(.system(size: 14, weight: .semibold))
-                Text(song.displayArtist).font(.system(size: 12)).foregroundStyle(Theme.textDim)
-            }
+    /// Sung, singing, or waiting — the desktop marks the current row; the
+    /// position number tells a room whose turn is next.
+    @ViewBuilder
+    private func marker(for index: Int) -> some View {
+        if index == session.currentIndex {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 22)
+        } else if index < session.currentIndex {
+            Image(systemName: "checkmark")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textDim)
+                .frame(width: 22)
+        } else {
+            Text("\(index - session.currentIndex)")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(Theme.textDim)
+                .frame(width: 22)
         }
     }
 }
