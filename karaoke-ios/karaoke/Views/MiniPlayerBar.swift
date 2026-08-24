@@ -65,9 +65,9 @@ struct MiniPlayerBar: View {
     }
 }
 
-/// The sing-along queue, as on the desktop: the whole list stays visible with
-/// the song on stage marked, so everyone can see what has been sung and what is
-/// coming. Tap to jump, swipe to remove, drag to reorder.
+/// The sing-along queue: everyone still waiting, in the order they will sing.
+/// A song leaves the list when it goes on stage. Tap to jump the line, swipe to
+/// remove, drag to reorder.
 struct QueueSheet: View {
     @Environment(PlayerSession.self) private var session
     @Environment(\.dismiss) private var dismiss
@@ -87,11 +87,14 @@ struct QueueSheet: View {
                         dismiss()
                     } label: {
                         HStack(spacing: 10) {
-                            marker(for: index)
+                            Text("\(index + 1)")
+                                .font(.system(size: 12).monospacedDigit())
+                                .foregroundStyle(Theme.textDim)
+                                .frame(width: 22)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(song.displayTitle)
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(index == session.currentIndex ? Theme.accent : Theme.text)
+                                    .foregroundStyle(Theme.text)
                                 Text(song.displayArtist)
                                     .font(.system(size: 12))
                                     .foregroundStyle(Theme.textDim)
@@ -100,7 +103,7 @@ struct QueueSheet: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(index == session.currentIndex ? Theme.bgHover : Theme.bgRaised)
+                    .listRowBackground(Theme.bgRaised)
                 }
                 .onDelete { session.remove(at: $0) }
                 .onMove { session.move(from: $0, to: $1) }
@@ -124,27 +127,6 @@ struct QueueSheet: View {
         .preferredColorScheme(.dark)
     }
 
-    /// Sung, singing, or waiting — the desktop marks the current row; the
-    /// position number tells a room whose turn is next.
-    @ViewBuilder
-    private func marker(for index: Int) -> some View {
-        if index == session.currentIndex {
-            Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.accent)
-                .frame(width: 22)
-        } else if index < session.currentIndex {
-            Image(systemName: "checkmark")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textDim)
-                .frame(width: 22)
-        } else {
-            Text("\(index - session.currentIndex)")
-                .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(Theme.textDim)
-                .frame(width: 22)
-        }
-    }
 }
 
 /// Which karaoke-server this iPad is pointed at.
