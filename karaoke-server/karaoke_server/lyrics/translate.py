@@ -19,9 +19,11 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-# Small batches keep the model's output short enough to stay well-formed, and
-# limit the blast radius when one batch comes back malformed.
-BATCH_SIZE = 20
+# Deliberately small. A long list invites the model to get lazy — truncating,
+# merging or splitting entries — and every one of those shows up as a length
+# mismatch that costs the whole batch. Short prompts stay well-formed, and a
+# failure only puts a handful of lines through the slower per-line path.
+BATCH_SIZE = 5
 
 _SYSTEM = (
     "You translate song lyrics. You are given a JSON array of lines. "
@@ -50,10 +52,14 @@ async def _one_batch(
             },
         ],
         "temperature": 0.2,
-        "max_tokens": 4096,
+        "max_tokens": 1024,
         # Qwen-style reasoning models otherwise spend the whole budget in
         # reasoning_content and return empty content.
         "chat_template_kwargs": {"enable_thinking": False},
+        # Every call is a fresh translation of unrelated lines. Reusing the
+        # server's KV cache across them buys nothing and risks the model
+        # drifting toward whatever it saw last.
+        "cache_prompt": False,
     }
     r = await client.post(url, json=payload)
     r.raise_for_status()
@@ -90,7 +96,19 @@ async def translate_lines(
             batch = lines[i : i + BATCH_SIZE]
             try:
                 out.extend(await _one_batch(client, url, model, batch, target))
+                continue
             except (httpx.HTTPError, TranslationError, KeyError, IndexError):
-                log.exception("translation batch %d failed; leaving it blank", i // BATCH_SIZE)
-                out.extend([None] * len(batch))
+                log.warning(
+                    "translation batch %d failed; retrying line by line", i // BATCH_SIZE
+                )
+            # Batches fail mainly because the model splits or merges a line and
+            # returns the wrong count. Sending one line at a time makes that
+            # impossible to get wrong: one input, one output, no alignment to
+            # lose. Slower, so it is only the fallback.
+            for line in batch:
+                try:
+                    out.extend(await _one_batch(client, url, model, [line], target))
+                except (httpx.HTTPError, TranslationError, KeyError, IndexError):
+                    log.warning("line translation failed; leaving it blank")
+                    out.append(None)
     return out
