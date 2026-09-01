@@ -57,6 +57,19 @@ final class PlayerSession {
         }
     }
 
+    /// The library's "Play all": a whole list at once, keeping the order it
+    /// was shown in. Same rule as `enqueue` — with nobody on stage the singing
+    /// starts from the top of the queue.
+    func enqueue(contentsOf songs: [Song]) {
+        guard !songs.isEmpty else { return }
+        queue.append(contentsOf: songs)
+        persistQueue()
+        if current == nil {
+            isPresentingPlayer = true
+            advance()
+        }
+    }
+
     /// Jump straight to a queued song. Like any song that reaches the stage it
     /// leaves the list; the ones it jumped ahead of keep their places.
     func playFromQueue(at index: Int) {

@@ -23,6 +23,7 @@ export interface RemoteState {
 export type RemoteCommand =
   | { type: 'next' }
   | { type: 'enqueue'; songId: string }
+  | { type: 'enqueueAll' }
   | { type: 'remove'; index: number }
   | { type: 'clear' }
 
@@ -186,6 +187,13 @@ export async function startRemoteServer(
                 return
               }
               hooks.command({ type: 'enqueue', songId: body.songId })
+              json(res, 200, { ok: true })
+              return
+            case '/api/queue/add-all':
+              // No ids from the phone: the renderer already knows how to fill
+              // the queue from the library, and it holds the only connection
+              // to karaoke-server.
+              hooks.command({ type: 'enqueueAll' })
               json(res, 200, { ok: true })
               return
             case '/api/queue/remove':

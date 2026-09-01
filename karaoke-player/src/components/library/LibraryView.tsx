@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Song } from '../../api/types'
+import { queueAll } from '../../player/playAll'
 import { PAGE_SIZE, useLibraryStore } from '../../stores/libraryStore'
 import { useUiStore } from '../../stores/uiStore'
 import { QueuePanel } from '../player/QueuePanel'
@@ -9,12 +10,27 @@ import { SearchBar } from './SearchBar'
 import { SongRow } from './SongRow'
 
 export function LibraryView() {
-  const { items, total, offset, loading, error, artistFilter } = useLibraryStore()
+  const { items, total, offset, loading, error, q, statusFilter, artistFilter } = useLibraryStore()
   const refresh = useLibraryStore((s) => s.refresh)
   const setOffset = useLibraryStore((s) => s.setOffset)
   const setArtistFilter = useLibraryStore((s) => s.setArtistFilter)
   const openWizard = useUiStore((s) => s.openWizard)
+  const toast = useUiStore((s) => s.toast)
   const [editing, setEditing] = useState<Song | null>(null)
+  const [queueingAll, setQueueingAll] = useState(false)
+
+  /** Queue everything the current filters match — every page of it, not just
+   * the one on screen — in the order the library lists it. */
+  const onPlayAll = () => {
+    setQueueingAll(true)
+    queueAll({ q: q || undefined, status: statusFilter || undefined, artist: artistFilter || undefined })
+      .then((n) => {
+        if (n) toast(`Queued ${n} song${n === 1 ? '' : 's'}`)
+        else toast('Nothing ready to queue yet')
+      })
+      .catch((err) => toast(err instanceof Error ? err.message : String(err), 'error'))
+      .finally(() => setQueueingAll(false))
+  }
 
   useEffect(() => {
     void refresh()
@@ -26,6 +42,9 @@ export function LibraryView() {
         <h1>Karaoke Library</h1>
         <div className="library-header-actions">
           <SearchBar />
+          <button onClick={onPlayAll} disabled={queueingAll || total === 0}>
+            {queueingAll ? 'Queueing…' : '▶ Play all'}
+          </button>
           <QueuePanel variant="inline" />
           <RemoteControlCard />
           <button className="primary" onClick={() => openWizard('new')}>

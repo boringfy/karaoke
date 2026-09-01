@@ -14,6 +14,8 @@ export interface QueueItem {
 interface QueueState {
   queue: QueueItem[]
   add: (item: QueueItem) => void
+  /** Append a whole list at once — one write, one persist, order preserved. */
+  addAll: (items: QueueItem[]) => void
   removeAt: (index: number) => void
   clear: () => void
   /** Take one item off the list so it can go on stage; null if the index is stale. */
@@ -68,6 +70,13 @@ export const useQueueStore = create<QueueState>((set, get) => ({
 
   add: (item) => {
     const queue = [...get().queue, item]
+    set({ queue })
+    persist(queue)
+  },
+
+  addAll: (items) => {
+    if (!items.length) return
+    const queue = [...get().queue, ...items]
     set({ queue })
     persist(queue)
   },

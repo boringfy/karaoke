@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { SERVER_BASE } from '../api/client'
 import { getSong } from '../api/songs'
+import { queueAll } from '../player/playAll'
 import { playNextInQueue } from '../player/usePlaybackEngine'
 import { usePlayerStore } from '../stores/playerStore'
 import { useQueueStore } from '../stores/queueStore'
@@ -17,7 +18,7 @@ import { useQueueStore } from '../stores/queueStore'
  */
 
 interface RemoteCommand {
-  type: 'next' | 'enqueue' | 'remove' | 'clear'
+  type: 'next' | 'enqueue' | 'enqueueAll' | 'remove' | 'clear'
   songId?: string
   index?: number
 }
@@ -63,6 +64,11 @@ export function useRemoteControl(): void {
           void getSong(cmd.songId)
             .then((s) => queue.add({ songId: s.id, title: s.title, artist: s.artist }))
             .catch(() => {})
+          break
+        case 'enqueueAll':
+          // Same helper as the desktop's "Play all" button, so a phone fills
+          // the queue with the same songs in the same order.
+          void queueAll()
           break
         case 'remove':
           if (typeof cmd.index === 'number') queue.removeAt(cmd.index)

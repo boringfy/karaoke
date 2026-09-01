@@ -92,6 +92,7 @@ export function remoteUiHtml(): string {
     <p class="sect">Now playing</p>
     <div id="now"><p class="muted" style="margin:0">Nothing playing</p></div>
     <div class="row" style="margin-top:14px">
+      <button class="grow" id="playall">▶ Play all</button>
       <button class="primary grow" id="next">⏭ Skip to next</button>
     </div>
     <p class="hint">Playback is controlled on the PC. This remote can queue and skip.</p>
@@ -194,6 +195,16 @@ export function remoteUiHtml(): string {
   $('token').addEventListener('keydown',function(e){if(e.key==='Enter')$('pair').click()})
   $('forget').onclick=function(){unpair('')}
   $('next').onclick=function(){post('/api/next')}
+  // A whole library landing in the queue is a big move on a small screen, so
+  // it asks first — the same courtesy as "Clear all".
+  $('playall').onclick=function(){
+    if(!confirm('Queue the whole library?'))return
+    var b=$('playall')
+    b.disabled=true;b.textContent='Queueing…'
+    post('/api/queue/add-all').catch(function(){}).then(function(){
+      b.disabled=false;b.textContent='▶ Play all'
+    })
+  }
   $('clear').onclick=function(){if(confirm('Clear the whole queue?'))post('/api/queue/clear')}
 
   $('queue').onclick=function(e){

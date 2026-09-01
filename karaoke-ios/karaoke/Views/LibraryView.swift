@@ -53,6 +53,13 @@ struct LibraryView: View {
                 .foregroundStyle(Theme.text)
             Spacer(minLength: 0)
             searchField
+            // Queues the list exactly as shown — same order, filters and all —
+            // so "play all" after a singer filter means that singer's set.
+            toolbarButton("play.fill", label: "Play all") {
+                session.enqueue(contentsOf: playableSongs)
+            }
+            .disabled(playableSongs.isEmpty)
+            .opacity(playableSongs.isEmpty ? 0.45 : 1)
             toolbarButton(
                 "list.bullet",
                 label: session.queue.isEmpty ? "Queue" : "Queue (\(session.queue.count))"
@@ -60,6 +67,10 @@ struct LibraryView: View {
             toolbarButton("gearshape", label: nil) { showSettings = true }
         }
     }
+
+    /// Songs the queue can actually take: a pending or failed import is still
+    /// in the table, greyed out, and must not land in the list.
+    private var playableSongs: [Song] { songs.filter(\.playable) }
 
     private var searchField: some View {
         HStack(spacing: 8) {
